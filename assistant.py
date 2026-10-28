@@ -35,7 +35,6 @@ NOTION_TOKEN = DATA_DIR / "notion-token.dpapi"
 NOTION_MCP_URL = "https://mcp.notion.com/mcp"
 DRIVE_URL = "https://drive.google.com/drive/u/0/my-drive"
 DEFAULT_MASCOT = "face"
-TEXT = "#273230"
 FRIEND_VOICE_PROMPT = (
     "말투는 친한 친구처럼 매우 장난스럽고 편하게 한다. 상황에 맞춰 문장 끝에 '~임', '~함', '~안됨~'을 "
     "자연스럽게 섞고, 물어도 알 수 없는 내용에는 '그걸 내가 어캐암~'처럼 익살스럽게 답한다. "
@@ -55,13 +54,20 @@ NOTION_READ_TOOLS = ("notion-search", "notion-fetch", "notion-get-tool-access", 
 THEMES = {
     "살구 민트": {"bg": "#F7F5F2", "panel": "#FFFEFC", "surface": "#F7F5F2",
                  "user": "#F7E7E1", "assistant": "#E9F3F0", "accent": "#356F6B",
-                 "muted": "#5E6966", "button": "#E7F0ED", "border": "#D8DEDA"},
+                 "muted": "#5E6966", "button": "#E7F0ED", "border": "#D8DEDA",
+                 "text": "#273230", "send_text": "#FFFFFF"},
     "오션 블루": {"bg": "#F4F7F7", "panel": "#FFFFFF", "surface": "#F4F7F7",
                   "user": "#F7E9DC", "assistant": "#E6EFF2", "accent": "#355F77",
-                  "muted": "#5E6C73", "button": "#E2EDF1", "border": "#D3E0E3"},
+                  "muted": "#5E6C73", "button": "#E2EDF1", "border": "#D3E0E3",
+                  "text": "#273230", "send_text": "#FFFFFF"},
     "라일락 크림": {"bg": "#F8F6F3", "panel": "#FFFFFF", "surface": "#F8F6F3",
                     "user": "#F9EEDB", "assistant": "#F0ECF6", "accent": "#66587F",
-                    "muted": "#6E6975", "button": "#ECE7F2", "border": "#DED9E5"},
+                    "muted": "#6E6975", "button": "#ECE7F2", "border": "#DED9E5",
+                    "text": "#273230", "send_text": "#FFFFFF"},
+    "다크 민트": {"bg": "#171F21", "panel": "#263235", "surface": "#171F21",
+                   "user": "#3D3B3A", "assistant": "#26423E", "accent": "#91D9C6",
+                   "muted": "#A8B9B5", "button": "#304C47", "border": "#3D5350",
+                   "text": "#F2F6F4", "send_text": "#15312B"},
 }
 
 
@@ -88,7 +94,7 @@ class RoundedMessage(tk.Canvas):
         width = text_width + 28
         top = 10 if self.is_user else 26
         content = self.create_text(14, top, text=self.message, anchor="nw",
-                                   width=text_width, fill=TEXT, font=self.body_font)
+                                   width=text_width, fill=theme["text"], font=self.body_font)
         bounds = self.bbox(content)
         height = (bounds[3] if bounds else top + 18) + 11
         radius = 17
@@ -170,7 +176,7 @@ class DeskBuddy:
         self.eyebrow = tk.Label(self.title, text="YOUR DESKTOP FRIEND", fg=self.theme["accent"],
                                 bg=self.theme["bg"], font=("Segoe UI", 8, "bold"))
         self.eyebrow.pack(anchor="w", pady=(5, 0))
-        self.name_label = tk.Label(self.title, text=self.settings["name"], fg=TEXT,
+        self.name_label = tk.Label(self.title, text=self.settings["name"], fg=self.theme["text"],
                                    bg=self.theme["bg"], font=("Malgun Gothic", 14, "bold"))
         self.name_label.pack(anchor="w", pady=(0, 0))
         self.status = tk.Label(self.title, text="준비됨", fg=self.theme["muted"],
@@ -184,15 +190,15 @@ class DeskBuddy:
         self.controls.pack(side="right", anchor="n", padx=2, pady=7)
         self.close_button = tk.Button(self.controls, text="×", command=self.close, fg=self.theme["muted"],
                                       bg=self.theme["bg"], activebackground=self.theme["bg"],
-                                      activeforeground=TEXT, relief="flat", font=("Arial", 16), bd=0)
+                                      activeforeground=self.theme["text"], relief="flat", font=("Arial", 16), bd=0)
         self.close_button.pack(side="right")
         self.fold_button = tk.Button(self.controls, text="−", command=self.toggle, fg=self.theme["muted"],
                                      bg=self.theme["bg"], activebackground=self.theme["bg"],
-                                     activeforeground=TEXT, relief="flat", font=("Arial", 15), bd=0)
+                                     activeforeground=self.theme["text"], relief="flat", font=("Arial", 15), bd=0)
         self.fold_button.pack(side="right", padx=2)
         self.settings_button = tk.Button(self.controls, text="⚙", command=self.show_settings,
                                          fg=self.theme["muted"], bg=self.theme["bg"],
-                                         activebackground=self.theme["bg"], activeforeground=TEXT,
+                                         activebackground=self.theme["bg"], activeforeground=self.theme["text"],
                                          relief="flat", font=("Segoe UI Symbol", 12), bd=0)
         self.settings_button.pack(side="right", padx=2)
 
@@ -223,7 +229,7 @@ class DeskBuddy:
 
         self.bottom = tk.Canvas(self.body, height=54, bg=self.theme["bg"],
                                 highlightthickness=0, bd=0)
-        self.entry = tk.Entry(self.bottom, bg=self.theme["panel"], fg=TEXT, insertbackground=TEXT,
+        self.entry = tk.Entry(self.bottom, bg=self.theme["panel"], fg=self.theme["text"], insertbackground=self.theme["text"],
                               font=("Malgun Gothic", 10), relief="flat", bd=0)
         self.entry.bind("<Return>", self.send)
         self.send_button = tk.Canvas(self.bottom, width=38, height=38, bg=self.theme["panel"],
@@ -333,18 +339,19 @@ class DeskBuddy:
             self.draw_avatar()
 
     def show_settings(self) -> None:
-        menu = tk.Menu(self.root, tearoff=False, bg=self.theme["panel"], fg=TEXT,
-                       activebackground=self.theme["button"], activeforeground=TEXT)
+        menu = tk.Menu(self.root, tearoff=False, bg=self.theme["panel"], fg=self.theme["text"],
+                       activebackground=self.theme["button"], activeforeground=self.theme["text"])
         menu.add_command(label="이름 바꾸기", command=self.change_name)
         menu.add_command(label="사용자 가이드라인", command=self.edit_guidelines)
         menu.add_command(label="Notion API 연결 설정", command=self.configure_notion)
-        size_menu = tk.Menu(menu, tearoff=False, bg=self.theme["panel"], fg=TEXT,
-                            activebackground=self.theme["button"], activeforeground=TEXT)
+        size_menu = tk.Menu(menu, tearoff=False, bg=self.theme["panel"], fg=self.theme["text"],
+                            activebackground=self.theme["button"], activeforeground=self.theme["text"])
         for label, width, height in (("작게", 380, 500), ("보통", 420, 600),
                                      ("넓게", 560, 720), ("크게", 680, 820)):
             size_menu.add_command(label=label, command=lambda w=width, h=height: self.set_window_size(w, h))
         menu.add_cascade(label="대화창 크기", menu=size_menu)
-        ai_menu = tk.Menu(menu, tearoff=False)
+        ai_menu = tk.Menu(menu, tearoff=False, bg=self.theme["panel"], fg=self.theme["text"],
+                          activebackground=self.theme["button"], activeforeground=self.theme["text"])
         for value, label in (("auto", "자동 (Codex 우선)"), ("codex", "Codex"), ("claude", "Claude Code")):
             ai_menu.add_command(label=("✓ " if self.settings["ai_backend"] == value else "  ") + label,
                                 command=lambda selected=value: self.change_ai_backend(selected))
@@ -391,12 +398,12 @@ class DeskBuddy:
         window.transient(self.root)
         window.attributes("-topmost", True)
         tk.Label(window, text="모모가 매 요청에서 기억할 규칙을 적어줘.",
-                 bg=self.theme["bg"], fg=TEXT, font=("Malgun Gothic", 10, "bold")).pack(anchor="w", padx=16, pady=(16, 3))
+                 bg=self.theme["bg"], fg=self.theme["text"], font=("Malgun Gothic", 10, "bold")).pack(anchor="w", padx=16, pady=(16, 3))
         tk.Label(window, text="예: 답은 한국어로 짧게. 일정은 저장 후 확인해줘.",
                  bg=self.theme["bg"], fg=self.theme["muted"], font=("Malgun Gothic", 9)).pack(anchor="w", padx=16, pady=(0, 9))
         buttons = tk.Frame(window, bg=self.theme["bg"])
         buttons.pack(side="bottom", fill="x", padx=16, pady=(0, 15))
-        editor = tk.Text(window, bg=self.theme["panel"], fg=TEXT, insertbackground=TEXT,
+        editor = tk.Text(window, bg=self.theme["panel"], fg=self.theme["text"], insertbackground=self.theme["text"],
                          relief="flat", wrap="word", font=("Malgun Gothic", 10), padx=10, pady=10)
         editor.pack(fill="both", expand=True, padx=16, pady=(0, 12))
         editor.insert("1.0", self.read_guidelines())
@@ -406,9 +413,9 @@ class DeskBuddy:
             self.add_message(self.settings["name"], "사용자 가이드라인을 저장했어. 다음 요청부터 적용할게.")
             window.destroy()
 
-        tk.Button(buttons, text="저장", command=save, bg=self.theme["button"], fg=TEXT,
+        tk.Button(buttons, text="저장", command=save, bg=self.theme["button"], fg=self.theme["text"],
                   relief="flat", font=("Malgun Gothic", 9, "bold")).pack(side="right", ipadx=14, ipady=5)
-        tk.Button(buttons, text="취소", command=window.destroy, bg=self.theme["panel"], fg=TEXT,
+        tk.Button(buttons, text="취소", command=window.destroy, bg=self.theme["panel"], fg=self.theme["text"],
                   relief="flat", font=("Malgun Gothic", 9)).pack(side="right", padx=8, ipadx=12, ipady=5)
         editor.focus_set()
 
@@ -451,11 +458,13 @@ class DeskBuddy:
         for widget in (self.eyebrow, self.name_label, self.status):
             widget.configure(bg=bg)
         self.eyebrow.configure(fg=accent)
+        self.name_label.configure(fg=self.theme["text"])
         self.status.configure(fg=muted)
         self.folder_label.configure(bg=bg, fg=muted)
         self.folder_button.configure(bg=panel, fg=accent, activebackground=self.theme["button"])
         for widget in (self.close_button, self.fold_button, self.settings_button):
-            widget.configure(bg=bg, activebackground=bg, fg=muted)
+            widget.configure(bg=bg, activebackground=bg, fg=muted,
+                             activeforeground=self.theme["text"])
         surface = self.theme["surface"]
         self.chat_shell.configure(bg=surface)
         self.chat_canvas.configure(bg=surface)
@@ -466,7 +475,7 @@ class DeskBuddy:
             if avatar:
                 self.draw_message_avatar(avatar)
         self.bottom.configure(bg=bg)
-        self.entry.configure(bg=panel, fg=TEXT, insertbackground=TEXT)
+        self.entry.configure(bg=panel, fg=self.theme["text"], insertbackground=self.theme["text"])
         self.send_button.configure(bg=panel)
         self.draw_send_button()
         self.draw_composer()
@@ -487,7 +496,7 @@ class DeskBuddy:
     def draw_send_button(self) -> None:
         self.send_button.delete("all")
         self.send_button.create_oval(1, 1, 37, 37, fill=self.theme["accent"], outline="")
-        self.send_button.create_text(19, 18, text="↑", fill="white",
+        self.send_button.create_text(19, 18, text="↑", fill=self.theme["send_text"],
                                      font=("Segoe UI", 16, "bold"))
 
     def draw_composer(self, _event: tk.Event | None = None) -> None:
@@ -534,7 +543,7 @@ class DeskBuddy:
         self.root.after_idle(lambda: self.chat_canvas.yview_moveto(1.0))
 
     def show_message_menu(self, event: tk.Event, message: str) -> None:
-        menu = tk.Menu(self.root, tearoff=False, bg=self.theme["panel"], fg=TEXT)
+        menu = tk.Menu(self.root, tearoff=False, bg=self.theme["panel"], fg=self.theme["text"])
         menu.add_command(label="메시지 복사", command=lambda: self.copy_message(message))
         try:
             menu.tk_popup(event.x_root, event.y_root)
