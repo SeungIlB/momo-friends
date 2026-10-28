@@ -32,11 +32,21 @@ RESPONSE_SCHEMA = ROOT / "response.schema.json"
 DATA_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "MomoFriends"
 SETTINGS = DATA_DIR / "settings.json"
 GUIDELINES = DATA_DIR / "guidelines.md"
+VOICE_STYLE = DATA_DIR / "voice-style.txt"
 CHAT_STYLE = DATA_DIR / "chat-style.dpapi"
 NOTION_TOKEN = DATA_DIR / "notion-token.dpapi"
 NOTION_MCP_URL = "https://mcp.notion.com/mcp"
 DRIVE_URL = "https://drive.google.com/drive/u/0/my-drive"
 DEFAULT_MASCOT = "face"
+DEFAULT_VOICE_STYLE = (
+    "말투는 친한 친구처럼 매우 장난스럽고 편하게 한다. 상황에 맞춰 문장 끝에 '~임', '~함', '~안됨~'을 "
+    "자연스럽게 섞고, 물어도 알 수 없는 내용에는 '그걸 내가 어캐암~'처럼 익살스럽게 답한다. "
+    "예를 들어 사용자가 '저녁 곱창 회식일정 추가해줘'라고 하면 '에바임~~~ 살쪄서 죽을거임~~~'처럼 "
+    "짧게 농담할 수 있다. 다만 농담만 하고 끝내지 말고 요청한 일정 추가를 실제로 진행한 뒤 "
+    "성공 여부와 날짜·시간을 같은 말투로 분명하게 알려준다. "
+    "매번 같은 유행어나 농담을 반복하지 않는다. 오류·불확실성·중요한 정보는 장난스럽더라도 정확하게 전한다. "
+    "사용자가 진지한 고민이나 민감한 주제를 말할 때는 농담을 줄이고 배려해서 답한다. "
+)
 TEXT_EXTENSIONS = {".txt", ".md", ".log", ".py", ".java", ".sql", ".json", ".xml", ".yaml", ".yml", ".html", ".css", ".js", ".ts"}
 DOCUMENT_EXTENSIONS = {".pdf", ".hwp", ".hwpx", ".doc", ".docx", ".xls", ".xlsx",
                        ".ppt", ".pptx", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".csv"}
@@ -337,6 +347,7 @@ class DeskBuddy:
                        activebackground=self.theme["button"], activeforeground=self.theme["text"])
         menu.add_command(label="이름 바꾸기", command=self.change_name)
         menu.add_command(label="사용자 가이드라인", command=self.edit_guidelines)
+        menu.add_command(label="말투 설정", command=self.edit_voice_style)
         menu.add_command(label="카톡 말투 가져오기", command=self.import_chat_style)
         if CHAT_STYLE.exists():
             menu.add_command(label="카톡 말투 지우기", command=self.remove_chat_style)
@@ -413,6 +424,60 @@ class DeskBuddy:
                 messagebox.showerror("카톡 말투 지우기", str(exc), parent=self.root)
                 return
             self.add_message(self.settings["name"], "저장된 카톡 말투 예시를 지웠어.")
+
+    @staticmethod
+    def read_voice_style() -> str:
+        try:
+            return VOICE_STYLE.read_text(encoding="utf-8").strip()[:12000]
+        except FileNotFoundError:
+            return DEFAULT_VOICE_STYLE
+        except OSError:
+            return DEFAULT_VOICE_STYLE
+
+    def edit_voice_style(self) -> None:
+        window = tk.Toplevel(self.root)
+        window.title("모모 말투 설정")
+        window.configure(bg=self.theme["bg"])
+        window.geometry("520x380")
+        window.transient(self.root)
+        window.attributes("-topmost", True)
+        tk.Label(window, text="모모의 말투를 직접 바꿀 수 있어.",
+                 bg=self.theme["bg"], fg=self.theme["text"], font=("Malgun Gothic", 10, "bold")).pack(anchor="w", padx=16, pady=(16, 3))
+        tk.Label(window, text="카톡 대화를 가져왔다면 실제 대화 예시도 함께 참고해.",
+                 bg=self.theme["bg"], fg=self.theme["muted"], font=("Malgun Gothic", 9)).pack(anchor="w", padx=16, pady=(0, 9))
+        buttons = tk.Frame(window, bg=self.theme["bg"])
+        buttons.pack(side="bottom", fill="x", padx=16, pady=(0, 15))
+        editor = tk.Text(window, bg=self.theme["panel"], fg=self.theme["text"], insertbackground=self.theme["text"],
+                         relief="flat", wrap="word", font=("Malgun Gothic", 10), padx=10, pady=10)
+        editor.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+        editor.insert("1.0", self.read_voice_style())
+
+        def save() -> None:
+            try:
+                DATA_DIR.mkdir(parents=True, exist_ok=True)
+                VOICE_STYLE.write_text(editor.get("1.0", "end").strip(), encoding="utf-8")
+            except OSError as exc:
+                messagebox.showerror("말투 설정", str(exc), parent=window)
+                return
+            self.add_message(self.settings["name"], "말투 설정을 저장했어. 다음 답변부터 적용할게.")
+            window.destroy()
+
+        def reset() -> None:
+            try:
+                VOICE_STYLE.unlink(missing_ok=True)
+            except OSError as exc:
+                messagebox.showerror("말투 설정", str(exc), parent=window)
+                return
+            self.add_message(self.settings["name"], "기본 친구 말투로 되돌렸어.")
+            window.destroy()
+
+        tk.Button(buttons, text="저장", command=save, bg=self.theme["button"], fg=self.theme["text"],
+                  relief="flat", font=("Malgun Gothic", 9, "bold")).pack(side="right", ipadx=14, ipady=5)
+        tk.Button(buttons, text="취소", command=window.destroy, bg=self.theme["panel"], fg=self.theme["text"],
+                  relief="flat", font=("Malgun Gothic", 9)).pack(side="right", padx=8, ipadx=12, ipady=5)
+        tk.Button(buttons, text="기본값 복원", command=reset, bg=self.theme["panel"], fg=self.theme["text"],
+                  relief="flat", font=("Malgun Gothic", 9)).pack(side="left", ipadx=12, ipady=5)
+        editor.focus_set()
 
     @staticmethod
     def read_guidelines() -> str:
@@ -807,6 +872,7 @@ class DeskBuddy:
 
         recent = "\n".join(f"사용자: {question}\n비서: {answer}" for question, answer in (history or []))
         guidelines = self.read_guidelines()
+        voice_style = self.read_voice_style()
         try:
             conversation_style = style_context(request, load_examples(CHAT_STYLE))
         except ValueError as exc:
@@ -814,6 +880,7 @@ class DeskBuddy:
             return
         prompt = (
             "너는 사용자의 데스크톱 개인 비서다. 한국어로 간결하고 정확하게 답한다. "
+            + (voice_style + "\n\n" if voice_style else "")
             + ("\n\n" + conversation_style if conversation_style else "") +
             "현재 시간은 " + datetime.now().astimezone().isoformat(timespec="minutes") + "이다. "
             "현재 작업 폴더는 " + str(workdir) + "이다. 사용자의 요청에 따라 이 폴더와 명시된 경로의 파일을 찾고 읽고 수정할 수 있다. "
