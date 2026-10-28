@@ -1,5 +1,5 @@
 #define MyAppName "모모 비서 (친구용)"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppExeName "MomoFriends.exe"
 
 [Setup]
