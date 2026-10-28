@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "message": { "type": "string" },
+    "open_file": { "type": ["string", "null"] },
+    "open_url": { "type": ["string", "null"] },
+    "change_directory": { "type": ["string", "null"] },
+    "drive_action": { "type": ["string", "null"], "enum": ["trash", null] },
+    "drive_target": { "type": ["string", "null"] },
+    "notion_action": { "type": ["string", "null"], "enum": ["trash", null] },
+    "notion_page_id": { "type": ["string", "null"] },
+    "notion_title": { "type": ["string", "null"] },
+    "calendar_action": { "type": ["string", "null"], "enum": ["create", "trash", null] },
+    "calendar_title": { "type": ["string", "null"] },
+    "calendar_date": { "type": ["string", "null"] },
+    "calendar_start": { "type": ["string", "null"] },
+    "calendar_end": { "type": ["string", "null"] }
+  },
+  "required": ["message", "open_file", "open_url", "change_directory", "drive_action", "drive_target", "notion_action", "notion_page_id", "notion_title", "calendar_action", "calendar_title", "calendar_date", "calendar_start", "calendar_end"],
+  "additionalProperties": false
+}

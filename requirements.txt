@@ -1,0 +1,4 @@
+Pillow>=10,<13
+requests>=2.31,<3
+pywin32>=306
+PyInstaller>=6,<7

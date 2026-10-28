@@ -1,0 +1,13 @@
+__pycache__/
+settings.json
+build/
+dist/
+installer/
+.venv/
+*.log
+*.dpapi
+.env
+.env.*
+chrome-profile/
+*.zip
+*.exe
