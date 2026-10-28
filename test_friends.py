@@ -25,7 +25,7 @@ class FriendEditionTest(unittest.TestCase):
         self.assertTrue(assistant.DeskBuddy.is_notion_request("노션에서 페이지 찾아줘"))
         self.assertTrue(assistant.DeskBuddy.is_today_briefing("오늘 브리핑해줘"))
 
-    def test_friend_voice_is_sent_to_ai_without_skipping_the_task(self):
+    def test_imported_chat_examples_are_sent_to_ai_without_skipping_the_task(self):
         class CaptureInput(io.StringIO):
             def close(self):
                 self.value = self.getvalue()
@@ -49,10 +49,12 @@ class FriendEditionTest(unittest.TestCase):
         fake = FakeProcess()
         with patch.object(assistant.DeskBuddy, "find_cli", return_value="codex.exe"), \
              patch.object(assistant.DeskBuddy, "read_guidelines", return_value=""), \
+             patch("assistant.load_examples", return_value={"speaker": "친구", "examples": [
+                 {"context": "저녁 곱창 회식일정 추가해줘", "reply": "에바임~~~ 근데 몇 시임?"}]}), \
              patch("assistant.subprocess.Popen", return_value=fake):
             buddy.ask_ai("저녁 곱창 회식일정 추가해줘")
-        self.assertIn("그걸 내가 어캐암~", fake.stdin.value)
-        self.assertIn("요청한 일정 추가를 실제로 진행", fake.stdin.value)
+        self.assertIn("에바임~~~ 근데 몇 시임?", fake.stdin.value)
+        self.assertNotIn("그걸 내가 어캐암~", fake.stdin.value)
         self.assertIn("저녁 곱창 회식일정 추가해줘", fake.stdin.value)
         self.assertEqual(buddy.events.get_nowait()[0], "result")
 

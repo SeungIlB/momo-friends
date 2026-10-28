@@ -24,6 +24,7 @@ from PIL import Image, ImageTk
 from google_browser import create_calendar_event, trash_calendar_event, trash_drive_folder
 from notion_api import trash_page, verify_token
 from token_storage import load_token, save_token
+from chat_style import decode_export, parse_export, save_examples, load_examples, style_context
 
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -31,19 +32,11 @@ RESPONSE_SCHEMA = ROOT / "response.schema.json"
 DATA_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "MomoFriends"
 SETTINGS = DATA_DIR / "settings.json"
 GUIDELINES = DATA_DIR / "guidelines.md"
+CHAT_STYLE = DATA_DIR / "chat-style.dpapi"
 NOTION_TOKEN = DATA_DIR / "notion-token.dpapi"
 NOTION_MCP_URL = "https://mcp.notion.com/mcp"
 DRIVE_URL = "https://drive.google.com/drive/u/0/my-drive"
 DEFAULT_MASCOT = "face"
-FRIEND_VOICE_PROMPT = (
-    "말투는 친한 친구처럼 매우 장난스럽고 편하게 한다. 상황에 맞춰 문장 끝에 '~임', '~함', '~안됨~'을 "
-    "자연스럽게 섞고, 물어도 알 수 없는 내용에는 '그걸 내가 어캐암~'처럼 익살스럽게 답한다. "
-    "예를 들어 사용자가 '저녁 곱창 회식일정 추가해줘'라고 하면 '에바임~~~ 살쪄서 죽을거임~~~'처럼 "
-    "짧게 농담할 수 있다. 다만 농담만 하고 끝내지 말고 요청한 일정 추가를 실제로 진행한 뒤 "
-    "성공 여부와 날짜·시간을 같은 말투로 분명하게 알려준다. "
-    "매번 같은 유행어나 농담을 반복하지 않는다. 오류·불확실성·중요한 정보는 장난스럽더라도 정확하게 전한다. "
-    "사용자가 진지한 고민이나 민감한 주제를 말할 때는 농담을 줄이고 배려해서 답한다. "
-)
 TEXT_EXTENSIONS = {".txt", ".md", ".log", ".py", ".java", ".sql", ".json", ".xml", ".yaml", ".yml", ".html", ".css", ".js", ".ts"}
 DOCUMENT_EXTENSIONS = {".pdf", ".hwp", ".hwpx", ".doc", ".docx", ".xls", ".xlsx",
                        ".ppt", ".pptx", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".csv"}
@@ -344,6 +337,9 @@ class DeskBuddy:
                        activebackground=self.theme["button"], activeforeground=self.theme["text"])
         menu.add_command(label="이름 바꾸기", command=self.change_name)
         menu.add_command(label="사용자 가이드라인", command=self.edit_guidelines)
+        menu.add_command(label="카톡 말투 가져오기", command=self.import_chat_style)
+        if CHAT_STYLE.exists():
+            menu.add_command(label="카톡 말투 지우기", command=self.remove_chat_style)
         menu.add_command(label="Notion API 연결 설정", command=self.configure_notion)
         size_menu = tk.Menu(menu, tearoff=False, bg=self.theme["panel"], fg=self.theme["text"],
                             activebackground=self.theme["button"], activeforeground=self.theme["text"])
@@ -378,6 +374,45 @@ class DeskBuddy:
         self.settings["ai_backend"] = value
         self.save_settings()
         self.add_message(self.settings["name"], "AI 엔진 설정을 저장했어. 다음 요청부터 적용할게.")
+
+    def import_chat_style(self) -> None:
+        filename = filedialog.askopenfilename(parent=self.root, title="카카오톡 대화 파일 선택",
+                                               filetypes=[("텍스트 파일", "*.txt"), ("모든 파일", "*.*")])
+        if not filename:
+            return
+        speaker = simpledialog.askstring("친구 표시 이름", "대화 파일에서 따라 할 친구의 카톡 표시 이름을 입력해줘.",
+                                         parent=self.root)
+        if speaker is None:
+            return
+        try:
+            examples = parse_export(decode_export(Path(filename)), speaker)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("카톡 말투 가져오기", str(exc), parent=self.root)
+            return
+        sample = "\n".join("• " + item["reply"][:90] for item in examples[:2])
+        accepted = messagebox.askyesno(
+            "카톡 말투 가져오기",
+            f"'{speaker.strip()}'의 대화 예시 {len(examples)}개를 찾았어.\n\n{sample}\n\n"
+            "원본 파일은 복사하지 않아. 추린 예시는 이 Windows 계정으로 암호화해 저장하고, "
+            "답변할 때 관련 예시 최대 6개를 선택한 AI 엔진에 보낼 거야. 가져올까?",
+            parent=self.root)
+        if not accepted:
+            return
+        try:
+            save_examples(CHAT_STYLE, speaker.strip(), examples)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("카톡 말투 가져오기", str(exc), parent=self.root)
+            return
+        self.add_message(self.settings["name"], f"'{speaker.strip()}'의 대화 예시 {len(examples)}개를 가져왔어. 다음 답변부터 말투에 참고할게.")
+
+    def remove_chat_style(self) -> None:
+        if messagebox.askyesno("카톡 말투 지우기", "저장된 카톡 말투 예시를 지울까?", parent=self.root):
+            try:
+                CHAT_STYLE.unlink(missing_ok=True)
+            except OSError as exc:
+                messagebox.showerror("카톡 말투 지우기", str(exc), parent=self.root)
+                return
+            self.add_message(self.settings["name"], "저장된 카톡 말투 예시를 지웠어.")
 
     @staticmethod
     def read_guidelines() -> str:
@@ -772,9 +807,14 @@ class DeskBuddy:
 
         recent = "\n".join(f"사용자: {question}\n비서: {answer}" for question, answer in (history or []))
         guidelines = self.read_guidelines()
+        try:
+            conversation_style = style_context(request, load_examples(CHAT_STYLE))
+        except ValueError as exc:
+            self.events.put(("error", str(exc)))
+            return
         prompt = (
             "너는 사용자의 데스크톱 개인 비서다. 한국어로 간결하고 정확하게 답한다. "
-            + FRIEND_VOICE_PROMPT +
+            + ("\n\n" + conversation_style if conversation_style else "") +
             "현재 시간은 " + datetime.now().astimezone().isoformat(timespec="minutes") + "이다. "
             "현재 작업 폴더는 " + str(workdir) + "이다. 사용자의 요청에 따라 이 폴더와 명시된 경로의 파일을 찾고 읽고 수정할 수 있다. "
             "파일을 찾았다고 말하기 전에 실제 경로와 존재 여부를 확인한다. "
