@@ -1,10 +1,10 @@
-# 모모 친구용 1.0.3
+# 모모 친구용 1.0.4
 
 Windows 바탕화면에서 쓰는 개인 비서입니다. 파일 찾기·읽기·수정, Google Calendar·Drive, Notion을 지원합니다. 친구처럼 장난스러운 말투로 답하며, 요청한 작업의 실행 여부는 분명히 알려줍니다. 오늘 브리핑은 Google Calendar의 오늘 일정만 읽습니다. 이 버전에는 할 일 관리 서비스가 없습니다.
 
 ## 설치
 
-`MomoFriendsSetup-1.0.3.exe`를 실행합니다. 설치 후 바탕화면이나 시작 메뉴의 **모모 비서 (친구용)**을 실행하세요. Python은 필요하지 않습니다. AI 기능을 쓰려면 Codex CLI 또는 Claude Code CLI 중 하나를 설치하고 본인 계정으로 로그인해야 합니다.
+`MomoFriendsSetup-1.0.4.exe`를 실행합니다. 설치 후 바탕화면이나 시작 메뉴의 **모모 비서 (친구용)**을 실행하세요. Python은 필요하지 않습니다. AI 기능을 쓰려면 Codex CLI 또는 Claude Code CLI 중 하나를 설치하고 본인 계정으로 로그인해야 합니다.
 
 친구용은 회사용과 함께 설치할 수 있습니다. 친구용 설정·가이드라인·Notion 토큰·Google 로그인 프로필은 `%LOCALAPPDATA%\MomoFriends`에 저장됩니다. 회사용 `%LOCALAPPDATA%\DeskBuddy`의 데이터를 읽거나 옮기지 않습니다. 설치 파일에는 계정 정보나 API 토큰이 들어 있지 않습니다.
 

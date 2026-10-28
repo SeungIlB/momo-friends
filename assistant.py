@@ -154,6 +154,7 @@ class DeskBuddy:
         self.resize_origin: tuple[int, int, int, int, int] | None = None
         self.resize_axis = "both"
         self.message_rows: list[tuple[tk.Frame, RoundedMessage, tk.Canvas | None, bool]] = []
+        self.scroll_job: str | None = None
 
         self.frame = tk.Frame(self.root, bg=self.theme["bg"],
                               highlightbackground=self.theme["border"], highlightthickness=1)
@@ -540,7 +541,15 @@ class DeskBuddy:
                 continue
             widget.bind("<MouseWheel>", self.scroll_chat)
         self.message_rows.append((row, bubble, avatar, is_user))
-        self.root.after_idle(lambda: self.chat_canvas.yview_moveto(1.0))
+        if self.scroll_job is not None:
+            self.root.after_cancel(self.scroll_job)
+        self.scroll_job = self.root.after_idle(self.scroll_to_latest)
+
+    def scroll_to_latest(self) -> None:
+        self.scroll_job = None
+        self.chat_inner.update_idletasks()
+        self.chat_canvas.configure(scrollregion=self.chat_canvas.bbox("all"))
+        self.chat_canvas.yview_moveto(1.0)
 
     def show_message_menu(self, event: tk.Event, message: str) -> None:
         menu = tk.Menu(self.root, tearoff=False, bg=self.theme["panel"], fg=self.theme["text"])
