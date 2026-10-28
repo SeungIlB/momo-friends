@@ -123,7 +123,7 @@ class DeskBuddy:
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         try:
-            width = max(360, min(900, int(self.settings["window_width"]),
+            width = max(360, min(int(self.settings["window_width"]),
                                   self.root.winfo_screenwidth() - 24))
             height = max(420, min(1000, int(self.settings["window_height"]),
                                    self.root.winfo_screenheight() - 70))
@@ -145,7 +145,8 @@ class DeskBuddy:
         self.last_request = ""
         self.drag_x = 0
         self.drag_y = 0
-        self.resize_origin: tuple[int, int, int, int] | None = None
+        self.resize_origin: tuple[int, int, int, int, int] | None = None
+        self.resize_axis = "both"
         self.message_rows: list[tuple[tk.Frame, RoundedMessage, tk.Canvas | None, bool]] = []
 
         self.frame = tk.Frame(self.root, bg=self.theme["bg"],
@@ -244,6 +245,13 @@ class DeskBuddy:
         self.resize_grip.bind("<Button-1>", self.start_resize)
         self.resize_grip.bind("<B1-Motion>", self.resize)
         self.resize_grip.bind("<ButtonRelease-1>", self.finish_resize)
+        self.resize_side = tk.Canvas(self.frame, width=16, height=64, bg=self.theme["bg"],
+                                     highlightthickness=0, cursor="size_we")
+        self.draw_side_resize_grip()
+        self.resize_side.place(relx=0, rely=0.52, anchor="w")
+        self.resize_side.bind("<Button-1>", lambda event: self.start_resize(event, "left"))
+        self.resize_side.bind("<B1-Motion>", self.resize)
+        self.resize_side.bind("<ButtonRelease-1>", self.finish_resize)
 
         self.add_message(self.settings["name"], "안녕! 파일·Drive·Notion 작업을 부탁해줘.\n'오늘 브리핑해줘'라고 하면 오늘 일정을 읽어줄게.")
         self.root.after(100, self.poll_events)
@@ -437,7 +445,7 @@ class DeskBuddy:
         self.theme = THEMES[name]
         bg, panel, accent, muted = (self.theme[key] for key in ("bg", "panel", "accent", "muted"))
         for widget in (self.root, self.frame, self.header, self.avatar, self.title, self.controls,
-                       self.body, self.folderbar, self.resize_grip):
+                       self.body, self.folderbar, self.resize_grip, self.resize_side):
             widget.configure(bg=bg)
         self.frame.configure(highlightbackground=self.theme["border"])
         for widget in (self.eyebrow, self.name_label, self.status):
@@ -463,6 +471,7 @@ class DeskBuddy:
         self.draw_send_button()
         self.draw_composer()
         self.draw_resize_grip()
+        self.draw_side_resize_grip()
         self.draw_avatar()
 
     def draw_message_avatar(self, avatar: tk.Canvas) -> None:
@@ -557,15 +566,30 @@ class DeskBuddy:
             self.resize_grip.create_line(16 - offset, 16, 16, 16 - offset,
                                           fill=color, width=1)
 
-    def start_resize(self, event: tk.Event) -> None:
+    def draw_side_resize_grip(self) -> None:
+        self.resize_side.delete("all")
+        color = self.theme["muted"]
+        for y in (25, 32, 39):
+            self.resize_side.create_oval(6, y, 10, y + 4, fill=color, outline="")
+
+    def start_resize(self, event: tk.Event, axis: str = "both") -> None:
         if not self.collapsed:
+            self.resize_axis = axis
             self.resize_origin = (event.x_root, event.y_root,
-                                  self.root.winfo_width(), self.root.winfo_height())
+                                  self.root.winfo_width(), self.root.winfo_height(),
+                                  self.root.winfo_x())
 
     def resize(self, event: tk.Event) -> None:
         if not self.resize_origin:
             return
-        origin_x, origin_y, width, height = self.resize_origin
+        origin_x, origin_y, width, height, window_x = self.resize_origin
+        if self.resize_axis == "left":
+            right = window_x + width
+            new_x = max(0, min(right - 360, window_x + event.x_root - origin_x))
+            width = right - new_x
+            self.expanded_size = (width, height)
+            self.root.geometry(f"{width}x{height}+{new_x}+{self.root.winfo_y()}")
+            return
         max_width = max(360, self.root.winfo_screenwidth() - self.root.winfo_x() - 12)
         max_height = max(420, self.root.winfo_screenheight() - self.root.winfo_y() - 42)
         width = max(360, min(max_width, width + event.x_root - origin_x))
@@ -607,6 +631,7 @@ class DeskBuddy:
             self.title.pack_forget()
             self.controls.pack_forget()
             self.resize_grip.place_forget()
+            self.resize_side.place_forget()
             self.header.pack_configure(padx=0, pady=0)
             self.avatar.configure(width=78, height=78)
             self.draw_avatar()
@@ -621,6 +646,7 @@ class DeskBuddy:
             self.controls.pack(side="right", anchor="n", padx=2, pady=7)
             self.body.pack(fill="both", expand=True)
             self.resize_grip.place(relx=1, rely=1, anchor="se")
+            self.resize_side.place(relx=0, rely=0.52, anchor="w")
             width, height = self.expanded_size
             self.root.geometry(f"{width}x{height}+{self.root.winfo_x()}+{self.root.winfo_y()}")
             self.entry.focus_set()
