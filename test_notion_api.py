@@ -1,6 +1,7 @@
 """Notion trash requires an exact page match and verifies the API result."""
 
 import unittest
+from datetime import datetime
 from unittest.mock import Mock, patch
 
 from notion_api import _same_requested_event_title, trash_page
@@ -8,7 +9,8 @@ from notion_api import _same_requested_event_title, trash_page
 
 class NotionTrashTest(unittest.TestCase):
     def test_notion_event_title_with_timestamp(self):
-        actual = "당산 옛날 곱창 회식 2026-10-28T17:30:00.000+09:00"
+        actual = "당산 옛날 곱창 회식 " + datetime.now().astimezone().replace(
+            hour=17, minute=30, second=0, microsecond=0).isoformat(timespec="milliseconds")
         self.assertTrue(_same_requested_event_title(actual, "당산 옛날 곱창 회식"))
         self.assertTrue(_same_requested_event_title(
             actual, "당산 옛날 곱창 회식 @오늘 오후 5:30 (GMT+9)"))
@@ -23,7 +25,8 @@ class NotionTrashTest(unittest.TestCase):
         before.json.return_value = {"object": "page", "id": page_id,
                                     "in_trash": False, "properties": {
                                         "title": {"type": "title", "title": [{"plain_text":
-                                            "당산 옛날 곱창 회식 2026-10-28T17:30:00.000+09:00"}]}}}
+                                            "당산 옛날 곱창 회식 " + datetime.now().astimezone().replace(
+                                                hour=17, minute=30, second=0, microsecond=0).isoformat(timespec="milliseconds")}]}}}
         after = Mock(ok=True, status_code=200)
         after.json.return_value = {"id": page_id, "in_trash": True}
         with patch("notion_api.requests.get", return_value=before), \

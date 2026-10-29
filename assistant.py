@@ -25,6 +25,7 @@ from google_browser import create_calendar_event, trash_calendar_event, trash_dr
 from notion_api import trash_page, verify_token
 from token_storage import load_token, save_token
 from chat_style import decode_export, parse_export, save_examples, load_examples, style_context
+from calendar_alerts import CalendarAlerts
 
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -34,6 +35,7 @@ SETTINGS = DATA_DIR / "settings.json"
 GUIDELINES = DATA_DIR / "guidelines.md"
 VOICE_STYLE = DATA_DIR / "voice-style.txt"
 CHAT_STYLE = DATA_DIR / "chat-style.dpapi"
+CALENDAR_ALERTS = DATA_DIR / "calendar-alerts.json"
 NOTION_TOKEN = DATA_DIR / "notion-token.dpapi"
 NOTION_MCP_URL = "https://mcp.notion.com/mcp"
 DRIVE_URL = "https://drive.google.com/drive/u/0/my-drive"
@@ -150,6 +152,7 @@ class DeskBuddy:
         self.chrome_process: subprocess.Popen[bytes] | None = None
         self.chrome_port: int | None = None
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
+        self.calendar_alerts = CalendarAlerts(CALENDAR_ALERTS)
         self.history: list[tuple[str, str]] = []
         self.last_request = ""
         self.drag_x = 0
@@ -265,12 +268,13 @@ class DeskBuddy:
 
         self.add_message(self.settings["name"], "안녕! 파일·Drive·Notion 작업을 부탁해줘.\n'오늘 브리핑해줘'라고 하면 오늘 일정을 읽어줄게.")
         self.root.after(100, self.poll_events)
+        self.root.after(2000, self.poll_calendar_alerts)
 
     @staticmethod
     def load_settings() -> dict[str, str]:
         defaults = {"name": "모모", "theme": "살구 민트", "mascot": DEFAULT_MASCOT,
                     "workdir": str(Path.home()), "ai_backend": "auto",
-                    "window_width": "420", "window_height": "600"}
+                    "window_width": "420", "window_height": "600", "reminder_minutes": "10"}
         try:
             saved = json.loads(SETTINGS.read_text(encoding="utf-8"))
             defaults.update({key: value for key, value in saved.items() if key in defaults and isinstance(value, str)})
@@ -280,6 +284,8 @@ class DeskBuddy:
             defaults["theme"] = "살구 민트"
         if defaults["ai_backend"] not in {"auto", "codex", "claude"}:
             defaults["ai_backend"] = "auto"
+        if defaults["reminder_minutes"] not in {"0", "5", "10", "30", "60"}:
+            defaults["reminder_minutes"] = "10"
         if Path(defaults["mascot"]).name == "mascot.png":
             defaults["mascot"] = DEFAULT_MASCOT
         return defaults
@@ -364,6 +370,13 @@ class DeskBuddy:
             ai_menu.add_command(label=("✓ " if self.settings["ai_backend"] == value else "  ") + label,
                                 command=lambda selected=value: self.change_ai_backend(selected))
         menu.add_cascade(label="AI 엔진", menu=ai_menu)
+        alert_menu = tk.Menu(menu, tearoff=False, bg=self.theme["panel"], fg=self.theme["text"],
+                             activebackground=self.theme["button"], activeforeground=self.theme["text"])
+        for minutes, label in (("0", "끄기"), ("5", "5분 전"), ("10", "10분 전"),
+                               ("30", "30분 전"), ("60", "1시간 전")):
+            alert_menu.add_command(label=("✓ " if self.settings["reminder_minutes"] == minutes else "  ") + label,
+                                   command=lambda value=minutes: self.change_reminder_minutes(value))
+        menu.add_cascade(label="일정 알림", menu=alert_menu)
         menu.add_command(label="기본 얼굴 사용", command=self.use_default_mascot)
         menu.add_command(label="캐릭터 이미지 바꾸기", command=self.change_mascot)
         menu.add_separator()
@@ -385,6 +398,48 @@ class DeskBuddy:
         self.settings["ai_backend"] = value
         self.save_settings()
         self.add_message(self.settings["name"], "AI 엔진 설정을 저장했어. 다음 요청부터 적용할게.")
+
+    def change_reminder_minutes(self, value: str) -> None:
+        self.settings["reminder_minutes"] = value
+        self.save_settings()
+        self.add_message(self.settings["name"], "일정 알림을 껐어." if value == "0" else
+                         f"모모에서 추가한 일정은 시작 {value}분 전에 알려줄게. 모모가 실행 중이어야 해.")
+        self.check_calendar_alerts()
+
+    def check_calendar_alerts(self) -> None:
+        try:
+            due = self.calendar_alerts.due(int(self.settings["reminder_minutes"]))
+        except (OSError, ValueError) as exc:
+            self.add_message(self.settings["name"], f"일정 알림을 확인하지 못했어: {exc}")
+            return
+        for item in due:
+            self.show_calendar_alert(item)
+
+    def poll_calendar_alerts(self) -> None:
+        self.check_calendar_alerts()
+        self.root.after(15000, self.poll_calendar_alerts)
+
+    def show_calendar_alert(self, item: dict) -> None:
+        window = tk.Toplevel(self.root)
+        window.title("모모 일정 알림")
+        window.configure(bg=self.theme["panel"], highlightbackground=self.theme["accent"], highlightthickness=1)
+        window.attributes("-topmost", True)
+        window.resizable(False, False)
+        window.geometry(f"320x132+{self.root.winfo_screenwidth() - 340}+{self.root.winfo_screenheight() - 200}")
+        tk.Label(window, text="◷  곧 시작하는 일정", bg=self.theme["panel"], fg=self.theme["accent"],
+                 font=("Malgun Gothic", 10, "bold")).pack(anchor="w", padx=16, pady=(12, 4))
+        tk.Label(window, text=item["title"], bg=self.theme["panel"], fg=self.theme["text"],
+                 font=("Malgun Gothic", 11, "bold"), wraplength=286, justify="left").pack(anchor="w", padx=16)
+        tk.Label(window, text=f"{item['day']} {item['start']}", bg=self.theme["panel"], fg=self.theme["muted"],
+                 font=("Malgun Gothic", 9)).pack(anchor="w", padx=16, pady=(2, 5))
+        tk.Button(window, text="확인", command=window.destroy, bg=self.theme["button"], fg=self.theme["text"],
+                  relief="flat", font=("Malgun Gothic", 9)).pack(anchor="e", padx=14, pady=(0, 8))
+        window.after(30000, lambda: window.destroy() if window.winfo_exists() else None)
+        window.lift()
+        try:
+            self.root.bell()
+        except tk.TclError:
+            pass
 
     def import_chat_style(self) -> None:
         filename = filedialog.askopenfilename(parent=self.root, title="카카오톡 대화 파일 선택",
@@ -1124,6 +1179,7 @@ class DeskBuddy:
                             message = (message + "\n" if message else "") + outcome
                         elif not page_id:
                             message = message or "삭제할 Notion 페이지를 정확히 알려줘."
+                    calendar_change = None
                     if calendar_trash_request:
                         title = parsed.get("calendar_title")
                         day = parsed.get("calendar_date")
@@ -1133,6 +1189,8 @@ class DeskBuddy:
                             try:
                                 endpoint = self.ensure_calendar_browser()
                                 outcome = trash_calendar_event(endpoint, title, day, start)
+                                if outcome.startswith("Google Calendar의 ") and "삭제하고" in outcome:
+                                    calendar_change = {"action": "remove", "title": title, "day": day, "start": start}
                             except (OSError, ValueError) as exc:
                                 outcome = f"캘린더 일정 삭제 실패: {exc}"
                             message = (message + "\n" if message else "") + outcome
@@ -1149,6 +1207,8 @@ class DeskBuddy:
                             try:
                                 endpoint = self.ensure_calendar_browser()
                                 outcome = create_calendar_event(endpoint, title, day, start, end)
+                                if outcome.startswith("Google Calendar에 ") or "일정이 이미 캘린더에 있어." in outcome:
+                                    calendar_change = {"action": "add", "title": title, "day": day, "start": start}
                             except (OSError, ValueError) as exc:
                                 outcome = f"캘린더 일정 추가 실패: {exc}"
                             message = (message + "\n" if message else "") + outcome
@@ -1158,6 +1218,7 @@ class DeskBuddy:
                                                            "open_file": parsed.get("open_file"),
                                                            "open_url": parsed.get("open_url"),
                                                            "change_directory": parsed.get("change_directory"),
+                                                           "calendar_change": calendar_change,
                                                            "requested_open": bool(re.search(r"열어|띄워|보여줘", request))},
                                                           ensure_ascii=False)))
                 else:
@@ -1279,6 +1340,17 @@ class DeskBuddy:
                 if kind == "result":
                     result = json.loads(value)
                     message = result["message"]
+                    change = result.get("calendar_change")
+                    if change:
+                        try:
+                            if change["action"] == "add":
+                                saved = self.calendar_alerts.add(change["title"], change["day"], change["start"])
+                                if saved and self.settings["reminder_minutes"] != "0":
+                                    message += f"\n모모가 실행 중이면 {self.settings['reminder_minutes']}분 전에 알려줄게."
+                            elif change["action"] == "remove":
+                                self.calendar_alerts.remove(change["title"], change["day"], change["start"])
+                        except (OSError, ValueError) as exc:
+                            message += f"\n이 PC의 일정 알림을 저장하지 못했어: {exc}"
                     if result["change_directory"]:
                         changed = self.set_workdir(result["change_directory"], announce=False)
                         message += (f"\n작업 폴더: {self.workdir}" if changed else
@@ -1288,6 +1360,8 @@ class DeskBuddy:
                     if result["requested_open"] and result.get("open_url"):
                         message += "\n" + self.open_web_url(result["open_url"])
                     self.add_message(self.settings["name"], message)
+                    if change and change["action"] == "add":
+                        self.check_calendar_alerts()
                 else:
                     message = value
                     self.add_message(self.settings["name"], value)
