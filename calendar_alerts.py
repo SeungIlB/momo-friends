@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -45,7 +46,14 @@ class CalendarAlerts:
         try:
             with os.fdopen(handle, "w", encoding="utf-8") as stream:
                 json.dump(self.items, stream, ensure_ascii=False, indent=2)
-            os.replace(name, self.path)
+            for attempt in range(5):
+                try:
+                    os.replace(name, self.path)
+                    break
+                except PermissionError:
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.05)
         finally:
             if os.path.exists(name):
                 os.unlink(name)

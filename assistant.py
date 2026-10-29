@@ -26,6 +26,7 @@ from notion_api import trash_page, verify_token
 from token_storage import load_token, save_token
 from chat_style import decode_export, parse_export, save_examples, load_examples, style_context
 from calendar_alerts import CalendarAlerts
+from mail_ui import MailMixin
 
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -116,7 +117,7 @@ class RoundedMessage(tk.Canvas):
         self.configure(width=width, height=height)
 
 
-class DeskBuddy:
+class DeskBuddy(MailMixin):
     def __init__(self) -> None:
         self.settings = self.load_settings()
         self.theme = THEMES[self.settings["theme"]]
@@ -152,6 +153,7 @@ class DeskBuddy:
         self.chrome_process: subprocess.Popen[bytes] | None = None
         self.chrome_port: int | None = None
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
+        self.mail_data_dir = DATA_DIR
         self.calendar_alerts = CalendarAlerts(CALENDAR_ALERTS)
         self.history: list[tuple[str, str]] = []
         self.last_request = ""
@@ -358,6 +360,7 @@ class DeskBuddy:
         if CHAT_STYLE.exists():
             menu.add_command(label="카톡 말투 지우기", command=self.remove_chat_style)
         menu.add_command(label="Notion API 연결 설정", command=self.configure_notion)
+        self.add_mail_menu(menu)
         size_menu = tk.Menu(menu, tearoff=False, bg=self.theme["panel"], fg=self.theme["text"],
                             activebackground=self.theme["button"], activeforeground=self.theme["text"])
         for label, width, height in (("작게", 380, 500), ("보통", 420, 600),
@@ -846,6 +849,9 @@ class DeskBuddy:
             return
         self.entry.delete(0, "end")
         self.add_message("나", request)
+        if self.is_mail_inbox_request(request):
+            self.show_recent_mail()
+            return
         if request.startswith("/remember ") or request.startswith("기억해줘: "):
             rule = request.split(" ", 1)[1].strip() if request.startswith("/remember ") else request.split(":", 1)[1].strip()
             if rule:
@@ -901,6 +907,7 @@ class DeskBuddy:
     def ask_ai(self, request: str, workdir: Path | None = None,
                   history: list[tuple[str, str]] | None = None) -> None:
         workdir = workdir or self.workdir
+        mail_send_request = bool(re.search(r"(?:이?메일|gmail|mailplug).{0,30}(?:보내|발송)|(?:보내|발송).{0,30}(?:이?메일|gmail|mailplug)", request, re.IGNORECASE))
         briefing = self.is_today_briefing(request)
         notion_confirmed = bool(
             history and re.search(r"^(?:ㅇ+|응+|그래|좋아|해|옮기)", request.strip())
@@ -976,6 +983,7 @@ class DeskBuddy:
             "Drive 폴더 삭제 요청이 아니면 drive_action과 drive_target은 null이다. "
             "Notion 페이지 삭제 요청이 아니면 notion_action, notion_page_id, notion_title은 null이다. "
             "Google Calendar 일정 추가·삭제 요청이 아니면 calendar_action, calendar_title, calendar_date, calendar_start, calendar_end는 null이다. "
+            "메일 발송 요청이 아니면 mail_action, mail_provider, mail_to, mail_subject, mail_body는 null이다. "
             "최종 응답은 지정된 JSON 스키마에 맞게 작성한다.\n\n"
             + ("사용자가 저장한 가이드라인:\n" + guidelines + "\n\n" if guidelines else "")
             + ("최근 대화:\n" + recent + "\n\n" if recent else "")
@@ -1049,6 +1057,15 @@ class DeskBuddy:
                 "calendar_date=YYYY-MM-DD, calendar_start와 calendar_end=HH:MM(24시간제)로 적는다. "
                 "연도가 없으면 현재 연도를 기준으로 한다. 빠진 정보가 있으면 관련 필드를 null로 두고 물어본다. "
                 "모모 앱이 전용 Chrome에서 중복 여부와 입력값을 확인한 뒤 저장한다. message에서 완료했다고 미리 말하지 않는다."
+            )
+        if mail_send_request:
+            prompt += (
+                "\n메일 발송 요청: 메일 도구나 브라우저로 직접 보내지 않는다. "
+                "받는 사람의 정확한 이메일 주소, 제목, 본문이 모두 분명하면 mail_action=send, "
+                "mail_to=이메일 주소, mail_subject=제목, mail_body=본문으로 적는다. "
+                "사용자가 Gmail이나 메일플러그를 지정하면 mail_provider는 gmail 또는 mailplug이고, 지정하지 않으면 null이다. "
+                "받는 사람을 이름만으로 추정하거나 주소가 모호하면 mail_action과 관련 필드를 null로 두고 정확한 주소를 물어본다. "
+                "모모 앱이 발송 전 내용을 사용자에게 보여주고 보내기 버튼을 기다린다. message에서 보냈다고 말하지 않는다."
             )
         browser_url = None
         existing_calendar_tab = False
@@ -1235,6 +1252,11 @@ class DeskBuddy:
                                                            "open_url": parsed.get("open_url"),
                                                            "change_directory": parsed.get("change_directory"),
                                                            "calendar_change": calendar_change,
+                                                           "mail_action": parsed.get("mail_action") if mail_send_request else None,
+                                                           "mail_provider": parsed.get("mail_provider"),
+                                                           "mail_to": parsed.get("mail_to"),
+                                                           "mail_subject": parsed.get("mail_subject"),
+                                                           "mail_body": parsed.get("mail_body"),
                                                            "requested_open": bool(re.search(r"열어|띄워|보여줘", request))},
                                                           ensure_ascii=False)))
                 else:
@@ -1356,6 +1378,11 @@ class DeskBuddy:
                 if kind == "result":
                     result = json.loads(value)
                     message = result["message"]
+                    if result.get("mail_action") == "send":
+                        message = self.show_mail_preview({"provider": result.get("mail_provider"),
+                                                          "to": result.get("mail_to"),
+                                                          "subject": result.get("mail_subject"),
+                                                          "body": result.get("mail_body")})
                     change = result.get("calendar_change")
                     if change:
                         try:
