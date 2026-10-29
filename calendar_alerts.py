@@ -27,8 +27,13 @@ class CalendarAlerts:
                         if not isinstance(item["title"], str) or not item["title"].strip():
                             continue
                         _start_at(item["day"], item["start"])
+                        snooze_until = item.get("snooze_until")
+                        if snooze_until is not None:
+                            if datetime.fromisoformat(snooze_until).tzinfo is None:
+                                continue
                         self.items.append({"title": item["title"], "day": item["day"],
-                                           "start": item["start"], "notified": bool(item.get("notified"))})
+                                           "start": item["start"], "notified": bool(item.get("notified")),
+                                           "snooze_until": snooze_until})
                     except (KeyError, TypeError, ValueError):
                         continue
         except (FileNotFoundError, OSError, ValueError):
@@ -55,7 +60,8 @@ class CalendarAlerts:
             return False
         if any(self._matches(item, title, day, start) for item in self.items):
             return True
-        self.items.append({"title": title, "day": day, "start": start, "notified": False})
+        self.items.append({"title": title, "day": day, "start": start,
+                           "notified": False, "snooze_until": None})
         self._save()
         return True
 
@@ -64,6 +70,18 @@ class CalendarAlerts:
         if len(remaining) != len(self.items):
             self.items = remaining
             self._save()
+
+    def snooze(self, title: str, day: str, start: str, minutes: int = 5,
+               now: datetime | None = None) -> bool:
+        now = now or datetime.now().astimezone()
+        if minutes <= 0:
+            raise ValueError("다시 알릴 시간을 정확히 지정해줘.")
+        for item in self.items:
+            if self._matches(item, title, day, start) and item["notified"]:
+                item["snooze_until"] = (now + timedelta(minutes=minutes)).isoformat()
+                self._save()
+                return True
+        return False
 
     def due(self, minutes: int, now: datetime | None = None) -> list[dict]:
         if minutes <= 0:
@@ -74,6 +92,19 @@ class CalendarAlerts:
         remaining = []
         for item in self.items:
             begins = _start_at(item["day"], item["start"])
+            snooze_until = item.get("snooze_until")
+            if snooze_until:
+                resumed = datetime.fromisoformat(snooze_until)
+                if resumed <= now:
+                    if now - resumed <= timedelta(minutes=30):
+                        item["snooze_until"] = None
+                        found.append({**item, "snoozed": True})
+                        changed = True
+                    else:
+                        changed = True
+                        continue
+                remaining.append(item)
+                continue
             if begins <= now:
                 changed = True
                 continue

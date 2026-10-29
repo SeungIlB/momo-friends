@@ -32,6 +32,21 @@ class CalendarAlertsTest(unittest.TestCase):
             alerts.remove("삭제할 일정", "2030-10-29", "10:00")
             self.assertEqual(alerts.due(10, datetime(2030, 10, 29, 9, 55, tzinfo=tz)), [])
 
+    def test_snooze_reappears_five_minutes_later_even_after_start(self):
+        tz = timezone(timedelta(hours=9))
+        day = "2030-10-29"
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "alerts.json"
+            alerts = CalendarAlerts(path)
+            alerts.add("회의", day, "10:00", datetime(2030, 10, 29, 9, 40, tzinfo=tz))
+            self.assertEqual(len(alerts.due(10, datetime(2030, 10, 29, 9, 50, tzinfo=tz))), 1)
+            self.assertTrue(alerts.snooze("회의", day, "10:00", now=datetime(2030, 10, 29, 9, 58, tzinfo=tz)))
+            restarted = CalendarAlerts(path)
+            self.assertEqual(restarted.due(10, datetime(2030, 10, 29, 10, 2, tzinfo=tz)), [])
+            reminder = restarted.due(10, datetime(2030, 10, 29, 10, 3, tzinfo=tz))
+            self.assertEqual([item["snoozed"] for item in reminder], [True])
+            self.assertEqual(restarted.due(10, datetime(2030, 10, 29, 10, 4, tzinfo=tz)), [])
+
 
 if __name__ == "__main__":
     unittest.main()

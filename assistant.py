@@ -426,20 +426,36 @@ class DeskBuddy:
         window.attributes("-topmost", True)
         window.resizable(False, False)
         window.geometry(f"320x132+{self.root.winfo_screenwidth() - 340}+{self.root.winfo_screenheight() - 200}")
-        tk.Label(window, text="◷  곧 시작하는 일정", bg=self.theme["panel"], fg=self.theme["accent"],
+        tk.Label(window, text="◷  일정 다시 알림" if item.get("snoozed") else "◷  곧 시작하는 일정",
+                 bg=self.theme["panel"], fg=self.theme["accent"],
                  font=("Malgun Gothic", 10, "bold")).pack(anchor="w", padx=16, pady=(12, 4))
         tk.Label(window, text=item["title"], bg=self.theme["panel"], fg=self.theme["text"],
                  font=("Malgun Gothic", 11, "bold"), wraplength=286, justify="left").pack(anchor="w", padx=16)
         tk.Label(window, text=f"{item['day']} {item['start']}", bg=self.theme["panel"], fg=self.theme["muted"],
                  font=("Malgun Gothic", 9)).pack(anchor="w", padx=16, pady=(2, 5))
-        tk.Button(window, text="확인", command=window.destroy, bg=self.theme["button"], fg=self.theme["text"],
-                  relief="flat", font=("Malgun Gothic", 9)).pack(anchor="e", padx=14, pady=(0, 8))
+        buttons = tk.Frame(window, bg=self.theme["panel"])
+        buttons.pack(anchor="e", padx=14, pady=(0, 8))
+        tk.Button(buttons, text="5분 뒤 다시", command=lambda: self.snooze_calendar_alert(item, window),
+                  bg=self.theme["button"], fg=self.theme["text"], relief="flat",
+                  font=("Malgun Gothic", 9)).pack(side="left", padx=(0, 8))
+        tk.Button(buttons, text="확인", command=window.destroy, bg=self.theme["button"], fg=self.theme["text"],
+                  relief="flat", font=("Malgun Gothic", 9)).pack(side="left")
         window.after(30000, lambda: window.destroy() if window.winfo_exists() else None)
         window.lift()
         try:
             self.root.bell()
         except tk.TclError:
             pass
+
+    def snooze_calendar_alert(self, item: dict, window: tk.Toplevel) -> None:
+        try:
+            saved = self.calendar_alerts.snooze(item["title"], item["day"], item["start"])
+        except (OSError, ValueError) as exc:
+            self.add_message(self.settings["name"], f"다시 알림을 저장하지 못했어: {exc}")
+            return
+        if saved:
+            window.destroy()
+            self.add_message(self.settings["name"], f"'{item['title']}' 일정은 5분 뒤 다시 알려줄게.")
 
     def import_chat_style(self) -> None:
         filename = filedialog.askopenfilename(parent=self.root, title="카카오톡 대화 파일 선택",
