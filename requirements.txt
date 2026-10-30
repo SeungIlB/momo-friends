@@ -1,6 +1,4 @@
 Pillow>=10,<13
 requests>=2.31,<3
-google-auth>=2,<3
-google-auth-oauthlib>=1,<2
 pywin32>=306
 PyInstaller>=6,<7

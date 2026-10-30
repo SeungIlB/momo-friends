@@ -12,6 +12,12 @@ import assistant
 
 
 class FriendEditionTest(unittest.TestCase):
+    def test_mail_integration_is_absent(self):
+        schema = json.loads(assistant.RESPONSE_SCHEMA.read_text(encoding="utf-8"))
+        self.assertFalse(any(key.startswith("mail_") for key in schema["properties"]))
+        self.assertFalse(hasattr(assistant.DeskBuddy, "show_mail_preview"))
+        self.assertFalse(hasattr(assistant.DeskBuddy, "add_mail_menu"))
+
     def test_no_company_task_integration(self):
         schema = json.loads(assistant.RESPONSE_SCHEMA.read_text(encoding="utf-8"))
         self.assertFalse(any(key.startswith("task_") for key in schema["properties"]))
