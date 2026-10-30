@@ -39,6 +39,7 @@ CHAT_STYLE = DATA_DIR / "chat-style.dpapi"
 CALENDAR_ALERTS = DATA_DIR / "calendar-alerts.json"
 NOTION_TOKEN = DATA_DIR / "notion-token.dpapi"
 NOTION_MCP_URL = "https://mcp.notion.com/mcp"
+CODEX_MODEL = "gpt-6-luna"
 DRIVE_URL = "https://drive.google.com/drive/u/0/my-drive"
 DEFAULT_MASCOT = "face"
 DEFAULT_VOICE_STYLE = (
@@ -1097,7 +1098,8 @@ class DeskBuddy(MailMixin):
                              and (not briefing or tool in {"list_pages", "select_page", "take_snapshot",
                                                             "click", "press_key", "wait_for"}))
         if backend == "codex":
-            command = [executable, "--no-daemon", "exec", "--skip-git-repo-check", "--sandbox", "workspace-write",
+            command = [executable, "--no-daemon", "exec", "-m", CODEX_MODEL,
+                       "--skip-git-repo-check", "--sandbox", "workspace-write",
                        "-C", str(workdir)]
         else:
             command = [executable, "-p", "--output-format", "json", "--json-schema",

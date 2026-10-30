@@ -59,8 +59,10 @@ class FriendEditionTest(unittest.TestCase):
              patch.object(assistant.DeskBuddy, "read_voice_style", return_value=assistant.DEFAULT_VOICE_STYLE), \
              patch("assistant.load_examples", return_value={"speaker": "친구", "examples": [
                  {"context": "저녁 곱창 회식일정 추가해줘", "reply": "에바임~~~ 근데 몇 시임?"}]}), \
-             patch("assistant.subprocess.Popen", return_value=fake):
+             patch("assistant.subprocess.Popen", return_value=fake) as launch:
             buddy.ask_ai("저녁 곱창 회식일정 추가해줘")
+        command = launch.call_args.args[0]
+        self.assertEqual(command[command.index("-m") + 1], "gpt-6-luna")
         self.assertIn("에바임~~~ 근데 몇 시임?", fake.stdin.value)
         self.assertIn("그걸 내가 어캐암~", fake.stdin.value)
         self.assertIn("저녁 곱창 회식일정 추가해줘", fake.stdin.value)
