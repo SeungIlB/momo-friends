@@ -152,6 +152,7 @@ class DeskBuddy(MailMixin):
         self.process: subprocess.Popen[str] | None = None
         self.chrome_process: subprocess.Popen[bytes] | None = None
         self.chrome_port: int | None = None
+        self.result_window: tk.Toplevel | None = None
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
         self.mail_data_dir = DATA_DIR
         self.calendar_alerts = CalendarAlerts(CALENDAR_ALERTS)
@@ -360,6 +361,7 @@ class DeskBuddy(MailMixin):
         if CHAT_STYLE.exists():
             menu.add_command(label="카톡 말투 지우기", command=self.remove_chat_style)
         menu.add_command(label="Notion API 연결 설정", command=self.configure_notion)
+        menu.add_command(label="Google 로그인 창 열기", command=self.open_google_login)
         self.add_mail_menu(menu)
         size_menu = tk.Menu(menu, tearoff=False, bg=self.theme["panel"], fg=self.theme["text"],
                             activebackground=self.theme["button"], activeforeground=self.theme["text"])
@@ -976,7 +978,7 @@ class DeskBuddy(MailMixin):
             "날짜나 시간이 모호해 잘못 저장할 가능성이 있으면 실행 전에 물어본다. "
             "일정을 저장했다면 화면에서 생성 여부를 확인한 뒤 완료했다고 답한다. "
             "요청받지 않은 일정은 만들거나 바꾸지 않는다. 비밀번호와 인증 코드는 요구하거나 기록하지 않는다. "
-            "Google Calendar가 로그인 화면이나 제품 소개 페이지로 이동하면 MCP가 띄운 Chrome에서 사용자가 직접 로그인해야 한다고 알려준다. "
+            "Google Calendar가 로그인 화면이면 톱니 → Google 로그인 창 열기로 로그인한 뒤 창을 닫으라고 안내한다. "
             "이전 작업이 실패한 뒤 사용자가 무엇을 해야 하냐고 묻는다면 실패 이유와 필요한 다음 행동을 구체적으로 설명한다. "
             "브라우저 연결에 실패하면 성공한 척하지 말고 원인을 말한다. "
             "이 앱에는 할 일 관리 기능이 없다. 할 일 등록이나 완료 요청은 수행하지 않고 기능이 없다고 설명한다. "
@@ -1010,7 +1012,7 @@ class DeskBuddy(MailMixin):
             prompt += (
                 "\nGoogle Drive 요청: chrome-devtools MCP로 drive.google.com 웹 화면을 직접 확인한다. "
                 "먼저 list_pages로 기존 Drive 탭을 찾아 선택하고, 없으면 새 Drive 탭을 연다. "
-                "로그인이 필요하면 모모가 연 전용 Chrome 창에서 사용자가 직접 로그인하도록 안내한다. "
+                "로그인이 필요하면 톱니 → Google 로그인 창 열기로 로그인한 뒤 창을 닫으라고 안내한다. "
                 "파일이나 폴더를 찾을 때 이름과 위치를 확인하고, 동명이인이면 임의로 선택하지 말고 후보를 알려준다. "
                 "파일을 열어 달라는 요청이면 Drive 탭에서 해당 파일을 실제로 열고 화면을 확인한 뒤 답한다. "
                 "폴더를 만들어 달라는 요청이면 대상 위치를 확인하고 같은 이름의 폴더가 있는지 먼저 살핀다. "
@@ -1271,6 +1273,30 @@ class DeskBuddy(MailMixin):
     def ensure_calendar_browser(self) -> str:
         return self.ensure_google_browser("https://calendar.google.com/")
 
+    def open_google_login(self) -> None:
+        """Open the dedicated profile visibly only when the user asks to sign in."""
+        chrome = next((path for path in (
+            Path(os.environ.get("PROGRAMFILES", "C:\\Program Files")) / "Google/Chrome/Application/chrome.exe",
+            Path(os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)")) / "Google/Chrome/Application/chrome.exe",
+        ) if path.is_file()), None)
+        if chrome is None:
+            self.add_message(self.settings["name"], "Google Chrome이 설치되어 있지 않아.")
+            return
+        if self.chrome_process and self.chrome_process.poll() is None:
+            self.chrome_process.terminate()
+            try:
+                self.chrome_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.chrome_process.kill()
+        self.chrome_process = None
+        self.chrome_port = None
+        profile = DATA_DIR / "chrome-profile"
+        profile.mkdir(parents=True, exist_ok=True)
+        subprocess.Popen([str(chrome), f"--user-data-dir={profile}", "--no-first-run",
+                          "https://accounts.google.com/"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.add_message(self.settings["name"], "Google 계정에 로그인한 뒤 Chrome 창을 닫아줘. 다음 작업부터 백그라운드에서 처리할게.")
+
     @staticmethod
     def existing_google_browser(profile: Path) -> str | None:
         """Find a surviving dedicated Chrome from an earlier Momo process."""
@@ -1326,8 +1352,9 @@ class DeskBuddy(MailMixin):
         self.chrome_process = subprocess.Popen(
             [str(chrome), f"--remote-debugging-port={port}", "--remote-debugging-address=127.0.0.1",
              f"--user-data-dir={profile}", "--no-first-run", "--no-default-browser-check",
-             start_url],
+             "--headless=new", "--disable-gpu", start_url],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         endpoint = f"http://127.0.0.1:{port}"
         for _ in range(40):
@@ -1341,7 +1368,6 @@ class DeskBuddy(MailMixin):
             try:
                 with urllib.request.urlopen(endpoint + "/json/version", timeout=0.5):
                     self.chrome_port = port
-                    self.events.put(("note", "Google용 Chrome을 열었어. 처음 사용한다면 그 창에서 구글 계정에 직접 로그인해줘."))
                     return endpoint
             except (OSError, TimeoutError):
                 time.sleep(0.25)
@@ -1370,6 +1396,27 @@ class DeskBuddy(MailMixin):
                 "/calendar/" if host == "calendar.google.com" else "/drive/"):
                 return True
         return False
+
+    def show_result_window(self, message: str, failed: bool = False) -> None:
+        if self.result_window and self.result_window.winfo_exists():
+            self.result_window.destroy()
+        window = tk.Toplevel(self.root)
+        self.result_window = window
+        window.title("모모 · 작업 결과")
+        window.geometry("430x250")
+        window.configure(bg=self.theme["bg"])
+        window.attributes("-topmost", True)
+        window.resizable(True, True)
+        tk.Label(window, text="처리하지 못했어" if failed else "작업 완료", bg=self.theme["bg"],
+                 fg=self.theme["accent"], font=("Malgun Gothic", 12, "bold")).pack(anchor="w", padx=18, pady=(16, 8))
+        body = tk.Text(window, wrap="word", bg=self.theme["panel"], fg=self.theme["text"],
+                       relief="flat", padx=12, pady=10, font=("Malgun Gothic", 10))
+        body.pack(fill="both", expand=True, padx=18)
+        body.insert("1.0", message)
+        body.configure(state="disabled")
+        tk.Button(window, text="닫기", command=window.destroy, bg=self.theme["button"],
+                  fg=self.theme["text"], relief="flat").pack(anchor="e", padx=18, pady=12)
+        window.lift()
 
     def poll_events(self) -> None:
         try:
@@ -1409,6 +1456,8 @@ class DeskBuddy(MailMixin):
                     message = value
                     self.add_message(self.settings["name"], value)
                 if kind in ("answer", "error", "result"):
+                    if not (kind == "result" and result.get("mail_action") == "send"):
+                        self.show_result_window(message, failed=kind == "error")
                     if self.last_request:
                         self.history.append((self.last_request, message))
                         self.history = self.history[-6:]
