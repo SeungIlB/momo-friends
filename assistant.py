@@ -152,7 +152,6 @@ class DeskBuddy(MailMixin):
         self.process: subprocess.Popen[str] | None = None
         self.chrome_process: subprocess.Popen[bytes] | None = None
         self.chrome_port: int | None = None
-        self.result_window: tk.Toplevel | None = None
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
         self.mail_data_dir = DATA_DIR
         self.calendar_alerts = CalendarAlerts(CALENDAR_ALERTS)
@@ -1397,27 +1396,6 @@ class DeskBuddy(MailMixin):
                 return True
         return False
 
-    def show_result_window(self, message: str, failed: bool = False) -> None:
-        if self.result_window and self.result_window.winfo_exists():
-            self.result_window.destroy()
-        window = tk.Toplevel(self.root)
-        self.result_window = window
-        window.title("모모 · 작업 결과")
-        window.geometry("430x250")
-        window.configure(bg=self.theme["bg"])
-        window.attributes("-topmost", True)
-        window.resizable(True, True)
-        tk.Label(window, text="처리하지 못했어" if failed else "작업 완료", bg=self.theme["bg"],
-                 fg=self.theme["accent"], font=("Malgun Gothic", 12, "bold")).pack(anchor="w", padx=18, pady=(16, 8))
-        body = tk.Text(window, wrap="word", bg=self.theme["panel"], fg=self.theme["text"],
-                       relief="flat", padx=12, pady=10, font=("Malgun Gothic", 10))
-        body.pack(fill="both", expand=True, padx=18)
-        body.insert("1.0", message)
-        body.configure(state="disabled")
-        tk.Button(window, text="닫기", command=window.destroy, bg=self.theme["button"],
-                  fg=self.theme["text"], relief="flat").pack(anchor="e", padx=18, pady=12)
-        window.lift()
-
     def poll_events(self) -> None:
         try:
             while True:
@@ -1456,8 +1434,6 @@ class DeskBuddy(MailMixin):
                     message = value
                     self.add_message(self.settings["name"], value)
                 if kind in ("answer", "error", "result"):
-                    if not (kind == "result" and result.get("mail_action") == "send"):
-                        self.show_result_window(message, failed=kind == "error")
                     if self.last_request:
                         self.history.append((self.last_request, message))
                         self.history = self.history[-6:]
