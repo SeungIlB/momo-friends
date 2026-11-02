@@ -29,6 +29,7 @@ class CalendarWidget:
         self.month = date.today().replace(day=1)
         self.selected = date.today()
         self.rows: list[dict[str, str]] = []
+        self.day_buttons: dict[date, Button] = {}
         self.local_changes: list[dict[str, str]] = []
         self.feed_cache: dict[str, dict[str, object]] = {}
         self.feed_connected = False
@@ -140,17 +141,25 @@ class CalendarWidget:
             Label(self.grid, text=label, bg=self.theme["panel"], fg=self.theme["muted"],
                   font=("Malgun Gothic", 8)).grid(row=0, column=col, sticky="nsew", pady=(0, 4))
         marked = {row["day"] for row in self.rows}
+        self.day_buttons = {}
         for row_index, week in enumerate(calendar.Calendar().monthdatescalendar(self.month.year, self.month.month), 1):
             for col, day in enumerate(week):
                 active = day == self.selected
                 text = str(day.day) + (" •" if day.isoformat() in marked else "")
-                Button(self.grid, text=text, relief="flat", bd=0,
+                button = Button(self.grid, text=text, relief="flat", bd=0,
                        bg=self.theme["button"] if active else self.theme["panel"],
                        fg=self.theme["accent"] if active else
                        (self.theme["text"] if day.month == self.month.month else self.theme["muted"]),
                        font=("Malgun Gothic", 8, "bold" if active else "normal"),
-                       command=lambda value=day: self.select_day(value)).grid(row=row_index, column=col, sticky="nsew", pady=1)
+                       command=lambda value=day: self.select_day(value))
+                button.grid(row=row_index, column=col, sticky="nsew", pady=1)
+                self.day_buttons[day] = button
         self._render_agenda()
+
+    def _update_day_markers(self) -> None:
+        marked = {row["day"] for row in self.rows}
+        for day, button in self.day_buttons.items():
+            button.configure(text=str(day.day) + (" •" if day.isoformat() in marked else ""))
 
     def select_day(self, day: date) -> None:
         if day.month != self.month.month:
@@ -262,9 +271,8 @@ class CalendarWidget:
                     self.rows = rows
                     self.status.configure(text="일부 캘린더 연결 실패" if failed else "모모 일정 변경 시 바로 반영")
                     if changed:
-                        self._render()
-                    else:
-                        self._render_agenda()
+                        self._update_day_markers()
+                    self._render_agenda()
                 else:
                     error, request_id = value
                     if request_id != self.request_id:
