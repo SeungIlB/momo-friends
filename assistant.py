@@ -26,6 +26,8 @@ from notion_api import trash_page_by_title, verify_token
 from token_storage import load_token, save_token
 from chat_style import decode_export, parse_export, save_examples, load_examples, style_context
 from calendar_alerts import CalendarAlerts
+from calendar_feed import validate_feed_url
+from calendar_widget import CalendarWidget
 
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -37,6 +39,7 @@ VOICE_STYLE = DATA_DIR / "voice-style.txt"
 CHAT_STYLE = DATA_DIR / "chat-style.dpapi"
 CALENDAR_ALERTS = DATA_DIR / "calendar-alerts.json"
 NOTION_TOKEN = DATA_DIR / "notion-token.dpapi"
+CALENDAR_FEED = DATA_DIR / "calendar-feed.dpapi"
 NOTION_MCP_URL = "https://mcp.notion.com/mcp"
 CODEX_MODEL = "gpt-6-luna"
 DRIVE_URL = "https://drive.google.com/drive/u/0/my-drive"
@@ -154,6 +157,7 @@ class DeskBuddy:
         self.chrome_port: int | None = None
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
         self.calendar_alerts = CalendarAlerts(CALENDAR_ALERTS)
+        self.calendar_widget: CalendarWidget | None = None
         self.history: list[tuple[str, str]] = []
         self.last_request = ""
         self.drag_x = 0
@@ -270,12 +274,14 @@ class DeskBuddy:
         self.add_message(self.settings["name"], "안녕! 파일·Drive·Notion 작업을 부탁해줘.\n'오늘 브리핑해줘'라고 하면 오늘 일정을 읽어줄게.")
         self.root.after(100, self.poll_events)
         self.root.after(2000, self.poll_calendar_alerts)
+        self.root.after(500, self.open_calendar_widget_if_enabled)
 
     @staticmethod
     def load_settings() -> dict[str, str]:
         defaults = {"name": "모모", "theme": "살구 민트", "mascot": DEFAULT_MASCOT,
                     "workdir": str(Path.home()), "ai_backend": "auto",
-                    "window_width": "420", "window_height": "600", "reminder_minutes": "10"}
+                    "window_width": "420", "window_height": "600", "reminder_minutes": "10",
+                    "widget_visible": "true", "widget_x": "", "widget_y": ""}
         try:
             saved = json.loads(SETTINGS.read_text(encoding="utf-8"))
             defaults.update({key: value for key, value in saved.items() if key in defaults and isinstance(value, str)})
@@ -360,6 +366,10 @@ class DeskBuddy:
             menu.add_command(label="카톡 말투 지우기", command=self.remove_chat_style)
         menu.add_command(label="Notion API 연결 설정", command=self.configure_notion)
         menu.add_command(label="Google 로그인 창 열기", command=self.open_google_login)
+        menu.add_command(label="캘린더 위젯에 캘린더 추가", command=self.configure_calendar_feed)
+        menu.add_command(label="위젯 캘린더 연결 초기화", command=self.clear_calendar_feeds)
+        menu.add_command(label="캘린더 위젯 숨기기" if self.settings["widget_visible"] == "true"
+                         else "캘린더 위젯 표시", command=self.toggle_calendar_widget)
         size_menu = tk.Menu(menu, tearoff=False, bg=self.theme["panel"], fg=self.theme["text"],
                             activebackground=self.theme["button"], activeforeground=self.theme["text"])
         for label, width, height in (("작게", 380, 500), ("보통", 420, 600),
@@ -607,6 +617,76 @@ class DeskBuddy:
             return
         self.add_message(self.settings["name"], "Notion API 연결을 저장했어. 페이지 휴지통 이동에 사용할게.")
 
+    def configure_calendar_feed(self) -> None:
+        value = simpledialog.askstring(
+            "캘린더 위젯 연결", "Google Calendar → 설정 → 내 캘린더 → 캘린더 통합에서\n'비공개 iCal 주소'를 복사해 붙여넣어줘.\n캘린더가 여러 개면 주소를 하나씩 추가해줘.",
+            parent=self.root, show="●")
+        if value is None:
+            return
+        try:
+            url = validate_feed_url(value)
+            feeds = self.load_calendar_feeds()
+            if url not in feeds:
+                feeds.append(url)
+            save_token(CALENDAR_FEED, json.dumps(feeds), "CalendarFeed")
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("캘린더 위젯 연결", str(exc), parent=self.root)
+            return
+        self.settings["widget_visible"] = "true"
+        self.save_settings()
+        self.open_calendar_widget_if_enabled()
+        if self.calendar_widget:
+            self.calendar_widget.refresh()
+        self.add_message(self.settings["name"], f"캘린더 {len(feeds)}개를 위젯에 연결했어. 모모가 일정을 바꾸면 위젯에 바로 반영할게.")
+
+    @staticmethod
+    def load_calendar_feeds() -> list[str]:
+        raw = load_token(CALENDAR_FEED, "CalendarFeed")
+        if not raw:
+            return []
+        try:
+            feeds = json.loads(raw)
+        except json.JSONDecodeError:
+            feeds = [raw]
+        if not isinstance(feeds, list) or not all(isinstance(url, str) for url in feeds):
+            raise ValueError("저장된 캘린더 주소를 읽지 못했어. 연결을 초기화한 뒤 다시 추가해줘.")
+        return feeds
+
+    def clear_calendar_feeds(self) -> None:
+        if not messagebox.askyesno("캘린더 연결 초기화", "위젯에 연결한 캘린더 주소를 모두 지울까?", parent=self.root):
+            return
+        CALENDAR_FEED.unlink(missing_ok=True)
+        if self.calendar_widget:
+            self.calendar_widget.rows = []
+            self.calendar_widget.refresh()
+
+    def open_calendar_widget_if_enabled(self) -> None:
+        if self.settings["widget_visible"] != "true" or self.calendar_widget:
+            return
+        try:
+            position = (int(self.settings["widget_x"]), int(self.settings["widget_y"]))
+        except ValueError:
+            position = None
+        self.calendar_widget = CalendarWidget(
+            self.root, self.theme, self.load_calendar_feeds,
+            self.configure_calendar_feed, self.toggle_calendar_widget,
+            self.save_calendar_widget_position, position)
+
+    def toggle_calendar_widget(self) -> None:
+        if self.calendar_widget:
+            self.calendar_widget.destroy()
+            self.calendar_widget = None
+            self.settings["widget_visible"] = "false"
+        else:
+            self.settings["widget_visible"] = "true"
+            self.open_calendar_widget_if_enabled()
+        self.save_settings()
+
+    def save_calendar_widget_position(self, x: int, y: int) -> None:
+        self.settings["widget_x"] = str(x)
+        self.settings["widget_y"] = str(y)
+        self.save_settings()
+
     def change_mascot(self) -> None:
         path = filedialog.askopenfilename(parent=self.root, title="캐릭터 이미지 선택",
                                           filetypes=[("이미지 파일", "*.png *.jpg *.jpeg *.webp *.gif")])
@@ -656,6 +736,10 @@ class DeskBuddy:
         self.draw_resize_grip()
         self.draw_side_resize_grip()
         self.draw_avatar()
+        if self.calendar_widget:
+            self.calendar_widget.destroy()
+            self.calendar_widget = None
+            self.open_calendar_widget_if_enabled()
 
     def draw_message_avatar(self, avatar: tk.Canvas) -> None:
         avatar.delete("all")
@@ -1451,6 +1535,9 @@ class DeskBuddy:
                     self.add_message(self.settings["name"], message)
                     if change and change["action"] == "add":
                         self.check_calendar_alerts()
+                    if change and self.calendar_widget:
+                        self.calendar_widget.apply_change(change)
+                        self.calendar_widget.refresh()
                 else:
                     message = value
                     self.add_message(self.settings["name"], value)

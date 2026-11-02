@@ -2,3 +2,5 @@ Pillow>=10,<13
 requests>=2.31,<3
 pywin32>=306
 PyInstaller>=6,<7
+icalendar>=6,<8
+recurring-ical-events>=3.7,<4

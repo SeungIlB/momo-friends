@@ -24,7 +24,8 @@ class FriendEditionTest(unittest.TestCase):
         self.assertFalse(hasattr(assistant.DeskBuddy, "show_tasks"))
         self.assertEqual(set(assistant.DeskBuddy.load_settings()),
                          {"name", "theme", "mascot", "workdir", "ai_backend",
-                          "window_width", "window_height", "reminder_minutes"})
+                          "window_width", "window_height", "reminder_minutes",
+                          "widget_visible", "widget_x", "widget_y"})
         self.assertEqual(assistant.DATA_DIR.name, "MomoFriends")
 
     def test_google_and_notion_requests_remain_available(self):
