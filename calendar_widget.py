@@ -161,12 +161,30 @@ class CalendarWidget:
         for day, button in self.day_buttons.items():
             button.configure(text=str(day.day) + (" •" if day.isoformat() in marked else ""))
 
+    def _style_day_button(self, day: date) -> None:
+        button = self.day_buttons.get(day)
+        if button is None:
+            return
+        active = day == self.selected
+        button.configure(
+            bg=self.theme["button"] if active else self.theme["panel"],
+            fg=self.theme["accent"] if active else
+            (self.theme["text"] if day.month == self.month.month else self.theme["muted"]),
+            font=("Malgun Gothic", 8, "bold" if active else "normal"),
+        )
+
     def select_day(self, day: date) -> None:
-        if day.month != self.month.month:
+        if day.year != self.month.year or day.month != self.month.month:
             self.month = day.replace(day=1)
+            self.selected = day
+            self._render()
             self.refresh()
-        self.selected = day
-        self._render()
+        else:
+            previous = self.selected
+            self.selected = day
+            self._style_day_button(previous)
+            self._style_day_button(day)
+            self._render_agenda()
         self.window.after(30, self._send_bottom)
 
     def apply_change(self, change: dict[str, str]) -> None:
