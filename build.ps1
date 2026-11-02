@@ -6,12 +6,13 @@ $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 $venvPython = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
 $pythonExe = if (Test-Path -LiteralPath $venvPython) { $venvPython } else { 'python' }
-$schemaData = (Join-Path $PSScriptRoot 'response.schema.json') + ':.'
-$iconData = (Join-Path $PSScriptRoot 'momo.ico') + ':.'
+$schemaData = (Join-Path $PSScriptRoot 'response.schema.json') + ';.'
+$iconData = (Join-Path $PSScriptRoot 'momo.ico') + ';.'
+$mascotData = (Join-Path $PSScriptRoot 'mascot-penguin.png') + ';.'
 
 & $pythonExe -m PyInstaller --noconfirm --clean --onedir --windowed `
     --name MomoFriends --icon (Join-Path $PSScriptRoot 'momo.ico') `
-    --add-data $schemaData --add-data $iconData `
+    --add-data $schemaData --add-data $iconData --add-data $mascotData `
     --distpath (Join-Path $PSScriptRoot 'dist') `
     --workpath (Join-Path $PSScriptRoot 'build\pyinstaller') `
     --specpath (Join-Path $PSScriptRoot 'build') `

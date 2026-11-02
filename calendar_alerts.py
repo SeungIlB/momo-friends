@@ -10,6 +10,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 
+REMINDER_OFFSETS = (60, 30, 5)
+
+
 def _start_at(day: str, start: str) -> datetime:
     return datetime.fromisoformat(f"{day}T{start}").astimezone()
 
@@ -32,8 +35,17 @@ class CalendarAlerts:
                         if snooze_until is not None:
                             if datetime.fromisoformat(snooze_until).tzinfo is None:
                                 continue
+                        notified_minutes = item.get("notified_minutes")
+                        if isinstance(notified_minutes, list):
+                            notified_minutes = sorted({int(value) for value in notified_minutes
+                                                       if int(value) in REMINDER_OFFSETS})
+                        else:
+                            # Old records only tracked a single reminder. Avoid replaying
+                            # it after upgrade by treating the reminder sequence as done.
+                            notified_minutes = list(REMINDER_OFFSETS) if item.get("notified") else []
                         self.items.append({"title": item["title"], "day": item["day"],
-                                           "start": item["start"], "notified": bool(item.get("notified")),
+                                           "start": item["start"], "notified": bool(notified_minutes),
+                                           "notified_minutes": notified_minutes,
                                            "snooze_until": snooze_until})
                     except (KeyError, TypeError, ValueError):
                         continue
@@ -69,7 +81,7 @@ class CalendarAlerts:
         if any(self._matches(item, title, day, start) for item in self.items):
             return True
         self.items.append({"title": title, "day": day, "start": start,
-                           "notified": False, "snooze_until": None})
+                           "notified": False, "notified_minutes": [], "snooze_until": None})
         self._save()
         return True
 
@@ -91,8 +103,10 @@ class CalendarAlerts:
                 return True
         return False
 
-    def due(self, minutes: int, now: datetime | None = None) -> list[dict]:
-        if minutes <= 0:
+    def due(self, minutes: int | tuple[int, ...], now: datetime | None = None) -> list[dict]:
+        offsets = (minutes,) if isinstance(minutes, int) else tuple(minutes)
+        offsets = tuple(sorted({value for value in offsets if value > 0}, reverse=True))
+        if not offsets:
             return []
         now = now or datetime.now().astimezone()
         found = []
@@ -116,9 +130,16 @@ class CalendarAlerts:
             if begins <= now:
                 changed = True
                 continue
-            if not item["notified"] and begins - timedelta(minutes=minutes) <= now:
+            notified_minutes = item.setdefault("notified_minutes", [])
+            due_offsets = [value for value in offsets
+                           if value not in notified_minutes and begins - timedelta(minutes=value) <= now]
+            if due_offsets:
+                # If Momo was closed across several reminder points, show only the
+                # most recent one and mark earlier points as passed.
+                reminder_minutes = min(due_offsets)
+                item["notified_minutes"] = sorted(set(notified_minutes + due_offsets))
                 item["notified"] = True
-                found.append(item.copy())
+                found.append({**item, "reminder_minutes": reminder_minutes})
                 changed = True
             remaining.append(item)
         self.items = remaining

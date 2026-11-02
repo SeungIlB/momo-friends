@@ -76,7 +76,7 @@ class CalendarWidget:
                             font=("Malgun Gothic", 8))
         self.status.pack(fill="x", padx=16, pady=(0, 12))
         self._render()
-        self.window.after(100, self._poll)
+        self.window.bind("<<CalendarFeedLoaded>>", self._poll)
         self.window.after(100, self._maintain_bottom)
         self.refresh()
 
@@ -118,7 +118,7 @@ class CalendarWidget:
     def _maintain_bottom(self) -> None:
         if self.window.winfo_exists():
             self._send_bottom()
-            self.window.after(2000, self._maintain_bottom)
+            self.window.after(15000, self._maintain_bottom)
 
     def change_month(self, offset: int) -> None:
         year = self.month.year + (self.month.month - 1 + offset) // 12
@@ -231,10 +231,14 @@ class CalendarWidget:
                 self.pending.put(("rows", (rows, len(errors))))
             else:
                 self.pending.put(("error", errors[0]))
+            try:
+                self.window.event_generate("<<CalendarFeedLoaded>>", when="tail")
+            except Exception:
+                pass
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _poll(self) -> None:
+    def _poll(self, _event=None) -> None:
         if not self.window.winfo_exists():
             return
         try:
@@ -258,7 +262,6 @@ class CalendarWidget:
                     self.refresh()
         except queue.Empty:
             pass
-        self.window.after(100, self._poll)
 
     def destroy(self) -> None:
         if self.window.winfo_exists():

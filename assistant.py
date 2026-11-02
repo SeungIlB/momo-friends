@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import ctypes
 import queue
 import re
 import shutil
@@ -22,7 +23,7 @@ from tkinter import font as tkfont
 
 from PIL import Image, ImageTk
 from google_browser import create_calendar_event, trash_calendar_event, trash_drive_folder
-from notion_api import trash_page_by_title, verify_token
+from notion_api import ensure_schedule_notes_database, rename_schedule_note, trash_page_by_title, verify_token
 from token_storage import load_token, save_token
 from chat_style import decode_export, parse_export, save_examples, load_examples, style_context
 from calendar_alerts import CalendarAlerts
@@ -43,7 +44,8 @@ CALENDAR_FEED = DATA_DIR / "calendar-feed.dpapi"
 NOTION_MCP_URL = "https://mcp.notion.com/mcp"
 CODEX_MODEL = "gpt-6-luna"
 DRIVE_URL = "https://drive.google.com/drive/u/0/my-drive"
-DEFAULT_MASCOT = "face"
+DEFAULT_MASCOT = "builtin_penguin"
+DEFAULT_MASCOT_IMAGE = ROOT / "mascot-penguin.png"
 DEFAULT_VOICE_STYLE = (
     "말투는 친한 친구처럼 매우 장난스럽고 편하게 한다. 상황에 맞춰 문장 끝에 '~임', '~함', '~안됨~'을 "
     "자연스럽게 섞고, 물어도 알 수 없는 내용에는 '그걸 내가 어캐암~'처럼 익살스럽게 답한다. "
@@ -136,7 +138,8 @@ class DeskBuddy:
             pass
         self.root.configure(bg=self.theme["bg"])
         self.root.overrideredirect(True)
-        self.root.attributes("-topmost", True)
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.root.attributes("-topmost", self.settings["always_on_top"] == "true")
         try:
             width = max(360, min(int(self.settings["window_width"]),
                                   self.root.winfo_screenwidth() - 24))
@@ -213,6 +216,12 @@ class DeskBuddy:
                                          activebackground=self.theme["bg"], activeforeground=self.theme["text"],
                                          relief="flat", font=("Segoe UI Symbol", 12), bd=0)
         self.settings_button.pack(side="right", padx=2)
+        self.pin_button = tk.Button(self.controls, text="📌", command=self.toggle_always_on_top,
+                                    fg=self.theme["accent"] if self.settings["always_on_top"] == "true" else self.theme["muted"],
+                                    bg=self.theme["bg"], activebackground=self.theme["bg"],
+                                    activeforeground=self.theme["text"], relief="flat",
+                                    font=("Segoe UI Emoji", 10), bd=0)
+        self.pin_button.pack(side="right", padx=2)
 
         self.body = tk.Frame(self.frame, bg=self.theme["bg"])
         self.body.pack(fill="both", expand=True)
@@ -272,15 +281,17 @@ class DeskBuddy:
         self.resize_side.bind("<ButtonRelease-1>", self.finish_resize)
 
         self.add_message(self.settings["name"], "안녕! 파일·Drive·Notion 작업을 부탁해줘.\n'오늘 브리핑해줘'라고 하면 오늘 일정을 읽어줄게.")
-        self.root.after(100, self.poll_events)
+        self.root.bind("<<MomoEvent>>", self.poll_events)
+        self.root.bind("<<MomoHotkey>>", self.show_from_hotkey)
         self.root.after(2000, self.poll_calendar_alerts)
         self.root.after(500, self.open_calendar_widget_if_enabled)
 
     @staticmethod
     def load_settings() -> dict[str, str]:
-        defaults = {"name": "모모", "theme": "살구 민트", "mascot": DEFAULT_MASCOT,
+        defaults = {"name": "비오", "theme": "살구 민트", "mascot": DEFAULT_MASCOT,
                     "workdir": str(Path.home()), "ai_backend": "auto",
-                    "window_width": "420", "window_height": "600", "reminder_minutes": "10",
+                    "window_width": "420", "window_height": "600", "reminder_minutes": "all",
+                    "always_on_top": "false",
                     "widget_visible": "true", "widget_x": "", "widget_y": ""}
         try:
             saved = json.loads(SETTINGS.read_text(encoding="utf-8"))
@@ -291,15 +302,26 @@ class DeskBuddy:
             defaults["theme"] = "살구 민트"
         if defaults["ai_backend"] not in {"auto", "codex", "claude"}:
             defaults["ai_backend"] = "auto"
-        if defaults["reminder_minutes"] not in {"0", "5", "10", "30", "60"}:
-            defaults["reminder_minutes"] = "10"
-        if Path(defaults["mascot"]).name == "mascot.png":
+        if defaults["reminder_minutes"] not in {"0", "all"}:
+            defaults["reminder_minutes"] = "all" if defaults["reminder_minutes"] != "0" else "0"
+        if defaults["always_on_top"] not in {"true", "false"}:
+            defaults["always_on_top"] = "false"
+        if defaults["mascot"] == "face" or Path(defaults["mascot"]).name == "mascot.png":
             defaults["mascot"] = DEFAULT_MASCOT
+        if defaults["name"] == "모모":
+            defaults["name"] = "비오"
         return defaults
 
     def save_settings(self) -> None:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         SETTINGS.write_text(json.dumps(self.settings, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def toggle_always_on_top(self) -> None:
+        pinned = self.settings["always_on_top"] != "true"
+        self.settings["always_on_top"] = "true" if pinned else "false"
+        self.root.attributes("-topmost", pinned)
+        self.pin_button.configure(fg=self.theme["accent"] if pinned else self.theme["muted"])
+        self.save_settings()
 
     def folder_caption(self) -> str:
         path = str(self.workdir)
@@ -330,19 +352,8 @@ class DeskBuddy:
     def draw_avatar(self) -> None:
         self.avatar.delete("all")
         self.avatar_item = None
-        if self.settings["mascot"] == DEFAULT_MASCOT:
-            center = (39, 39) if self.collapsed else (22, 22)
-            x, y = center
-            radius = 31 if self.collapsed else 19
-            self.avatar.create_oval(x - radius, y - radius, x + radius, y + radius,
-                                    fill=self.theme["panel"], outline=self.theme["accent"], width=2)
-            eye = 11 if self.collapsed else 8
-            self.avatar.create_oval(x - eye, y - 4, x - eye + 3, y - 1, fill=self.theme["accent"], outline="")
-            self.avatar.create_oval(x + eye - 3, y - 4, x + eye, y - 1, fill=self.theme["accent"], outline="")
-            self.avatar.create_arc(x - 8, y - 3, x + 8, y + 11, start=200, extent=140,
-                                   style="arc", outline=self.theme["accent"], width=2)
-            return
-        path = Path(self.settings["mascot"])
+        path = (DEFAULT_MASCOT_IMAGE if self.settings["mascot"] == DEFAULT_MASCOT
+                else Path(self.settings["mascot"]))
         try:
             with Image.open(path) as original:
                 picture = original.convert("RGBA")
@@ -384,12 +395,11 @@ class DeskBuddy:
         menu.add_cascade(label="AI 엔진", menu=ai_menu)
         alert_menu = tk.Menu(menu, tearoff=False, bg=self.theme["panel"], fg=self.theme["text"],
                              activebackground=self.theme["button"], activeforeground=self.theme["text"])
-        for minutes, label in (("0", "끄기"), ("5", "5분 전"), ("10", "10분 전"),
-                               ("30", "30분 전"), ("60", "1시간 전")):
+        for minutes, label in (("all", "1시간·30분·5분 전"), ("0", "끄기")):
             alert_menu.add_command(label=("✓ " if self.settings["reminder_minutes"] == minutes else "  ") + label,
                                    command=lambda value=minutes: self.change_reminder_minutes(value))
         menu.add_cascade(label="일정 알림", menu=alert_menu)
-        menu.add_command(label="기본 얼굴 사용", command=self.use_default_mascot)
+        menu.add_command(label="기본 펭귄 캐릭터 사용", command=self.use_default_mascot)
         menu.add_command(label="캐릭터 이미지 바꾸기", command=self.change_mascot)
         menu.add_separator()
         for name in THEMES:
@@ -415,12 +425,13 @@ class DeskBuddy:
         self.settings["reminder_minutes"] = value
         self.save_settings()
         self.add_message(self.settings["name"], "일정 알림을 껐어." if value == "0" else
-                         f"모모에서 추가한 일정은 시작 {value}분 전에 알려줄게. 모모가 실행 중이어야 해.")
+                         "모모에서 추가한 일정은 1시간·30분·5분 전에 알려줄게. 모모가 실행 중이어야 해.")
         self.check_calendar_alerts()
 
     def check_calendar_alerts(self) -> None:
         try:
-            due = self.calendar_alerts.due(int(self.settings["reminder_minutes"]))
+            due = self.calendar_alerts.due((60, 30, 5) if self.settings["reminder_minutes"] == "all"
+                                           else (0,))
         except (OSError, ValueError) as exc:
             self.add_message(self.settings["name"], f"일정 알림을 확인하지 못했어: {exc}")
             return
@@ -438,7 +449,9 @@ class DeskBuddy:
         window.attributes("-topmost", True)
         window.resizable(False, False)
         window.geometry(f"320x132+{self.root.winfo_screenwidth() - 340}+{self.root.winfo_screenheight() - 200}")
-        tk.Label(window, text="◷  일정 다시 알림" if item.get("snoozed") else "◷  곧 시작하는 일정",
+        reminder_label = {60: "1시간 전", 30: "30분 전", 5: "5분 전"}.get(item.get("reminder_minutes"))
+        heading = "일정 다시 알림" if item.get("snoozed") else f"{reminder_label} 알림" if reminder_label else "곧 시작하는 일정"
+        tk.Label(window, text=f"◷  {heading}",
                  bg=self.theme["panel"], fg=self.theme["accent"],
                  font=("Malgun Gothic", 10, "bold")).pack(anchor="w", padx=16, pady=(12, 4))
         tk.Label(window, text=item["title"], bg=self.theme["panel"], fg=self.theme["text"],
@@ -719,6 +732,9 @@ class DeskBuddy:
         for widget in (self.close_button, self.fold_button, self.settings_button):
             widget.configure(bg=bg, activebackground=bg, fg=muted,
                              activeforeground=self.theme["text"])
+        self.pin_button.configure(bg=bg, activebackground=bg,
+                                  fg=accent if self.settings["always_on_top"] == "true" else muted,
+                                  activeforeground=self.theme["text"])
         surface = self.theme["surface"]
         self.chat_shell.configure(bg=surface)
         self.chat_canvas.configure(bg=surface)
@@ -993,6 +1009,36 @@ class DeskBuddy:
         return bool(re.search(r"(?:회의|미팅).{0,20}(?:준비|자료)", request))
 
     @staticmethod
+    def is_schedule_note_request(request: str) -> bool:
+        has_note = bool(re.search(r"메모|노트", request))
+        has_schedule = bool(re.search(r"일정|약속|회의|미팅|캘린더|calendar", request, re.IGNORECASE))
+        has_date_or_time = bool(re.search(r"(?:오늘|내일|모레|\d{1,2}월\s*\d{1,2}일|\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2})", request))
+        has_note_action = bool(re.search(r"추가|작성|생성|만들|저장|기록|남겨|수정|변경|고쳐|찾아|조회|불러|메모해|적어|보여|확인|읽어|요약|브리핑", request))
+        return has_note and (has_schedule or has_date_or_time) and has_note_action
+
+    @staticmethod
+    def is_schedule_notes_setup_request(request: str) -> bool:
+        return bool(re.search(r"(?:일정\s*메모|메모\s*데이터베이스|일정\s*노트)", request)
+                    and re.search(r"데이터\s*베이스|DB|구조", request, re.IGNORECASE)
+                    and re.search(r"만들|생성|설정|준비|구성|관리", request))
+
+    @staticmethod
+    def parse_schedule_note_rename(request: str) -> tuple[str, str] | None:
+        if not re.search(r"메모|노트", request) or not re.search(
+                r"바꾸|변경|수정|고쳐|rename|change", request, re.IGNORECASE):
+            return None
+        quoted = re.findall(r"[‘'\"“]([^’'\"”]+)[’'\"”]", request)
+        if len(quoted) >= 2:
+            return quoted[0].strip(), quoted[1].strip()
+        match = re.search(
+            r"(?:메모\s*)?(.{1,100}?)\s*(?:을|를)\s*(.{1,100}?)\s*(?:으?로)\s*(?:바꾸|변경|수정|고쳐)",
+            request)
+        if not match:
+            return None
+        old_title = re.sub(r"^.*?(?:메모\s*)", "", match.group(1)).strip()
+        return (old_title, match.group(2).strip()) if old_title and match.group(2).strip() else None
+
+    @staticmethod
     def find_cli(name: str) -> str | None:
         candidates = [shutil.which(name + ".cmd"), shutil.which(name + ".exe"), shutil.which(name),
                       Path(os.environ.get("APPDATA", "")) / "npm" / (name + ".cmd"),
@@ -1011,7 +1057,13 @@ class DeskBuddy:
         notion_page_delete = bool(re.search(r"페이지", request) and
                                   re.search(r"삭제|지워|지우|없애|휴지통|옮겨|옮기", request) and
                                   not re.search(r"웹사이트|파일|PDF", request, re.IGNORECASE))
-        notion_request = self.is_notion_request(request) or notion_confirmed or notion_page_delete
+        meeting_prep = self.is_meeting_prep(request)
+        schedule_note_request = self.is_schedule_note_request(request)
+        schedule_notes_setup = self.is_schedule_notes_setup_request(request)
+        schedule_note_rename = self.parse_schedule_note_rename(request)
+        notion_request = (self.is_notion_request(request) or notion_confirmed or notion_page_delete
+                          or meeting_prep or schedule_note_request or schedule_notes_setup
+                          or schedule_note_rename is not None)
         notion_trash_request = (notion_confirmed or
                                 (notion_request and bool(re.search(r"삭제|지워|지우|없애|휴지통|옮겨|옮기", request))
                                  and not re.search(r"(?:삭제|지우|없애|옮기).{0,6}(?:마|않|안)", request)))
@@ -1019,7 +1071,7 @@ class DeskBuddy:
             target_request = history[-1][0] if notion_confirmed else request
             title = self.notion_delete_title(target_request)
             if not title:
-                self.events.put(("answer", "삭제할 Notion 페이지 제목을 정확히 알려줘."))
+                self.post_event(("answer", "삭제할 Notion 페이지 제목을 정확히 알려줘."))
                 return
             try:
                 token = load_token(NOTION_TOKEN, "Notion")
@@ -1029,16 +1081,44 @@ class DeskBuddy:
             except (OSError, ValueError) as exc:
                 outcome = f"Notion 페이지 삭제 실패: {exc}"
                 if "토큰" in str(exc) and ("만료" in str(exc) or "유효하지" in str(exc) or "저장" in str(exc)):
-                    self.events.put(("notion_token_login", ""))
-            self.events.put(("answer", outcome))
+                    self.post_event(("notion_token_login", ""))
+            self.post_event(("answer", outcome))
+            return
+        if schedule_note_rename:
+            try:
+                token = load_token(NOTION_TOKEN, "Notion")
+                if not token:
+                    raise ValueError("톱니 → Notion API 연결 설정에서 Integration 토큰을 저장해줘.")
+                outcome = rename_schedule_note(token, *schedule_note_rename)
+            except (OSError, ValueError) as exc:
+                outcome = f"일정 메모 수정 실패: {exc}"
+                if "토큰" in str(exc) and ("만료" in str(exc) or "유효하지" in str(exc) or "저장" in str(exc)):
+                    self.post_event(("notion_token_login", ""))
+            self.post_event(("answer", outcome))
+            return
+        if schedule_notes_setup:
+            try:
+                token = load_token(NOTION_TOKEN, "Notion")
+                if not token:
+                    raise ValueError("톱니 → Notion API 연결 설정에서 Integration 토큰을 저장해줘.")
+                _, _, created = ensure_schedule_notes_database(token)
+                outcome = ("내 Notion 연결로 ‘📝일정 메모’ 페이지 안에 ‘일정 메모’ 데이터베이스를 만들고 열을 준비했어."
+                           if created else
+                           "내 Notion 연결로 ‘📝일정 메모’ 페이지의 ‘일정 메모’ 데이터베이스를 찾아 필요한 열을 준비했어.")
+            except (OSError, ValueError) as exc:
+                outcome = f"일정 메모 데이터베이스 설정 실패: {exc}"
+                if "토큰" in str(exc) and ("만료" in str(exc) or "유효하지" in str(exc) or "저장" in str(exc)):
+                    self.post_event(("notion_token_login", ""))
+            self.post_event(("answer", outcome))
             return
         notion_tools = (NOTION_READ_TOOLS
-                        + (("notion-create-pages",) if not notion_trash_request and re.search(r"만들|생성|작성|추가", request) else ())
-                        + (("notion-update-page",) if not notion_trash_request and re.search(r"수정|변경|고쳐|업데이트", request) else ()))
-        meeting_prep = self.is_meeting_prep(request) and not notion_request
+                        + (("notion-create-pages",) if not notion_trash_request and
+                           re.search(r"만들|생성|작성|추가|저장|기록|남겨|메모해|적어|써줘", request) else ())
+                        + (("notion-update-page",) if not notion_trash_request and
+                           re.search(r"수정|변경|고쳐|업데이트", request) else ()))
         drive_trash_request = self.is_drive_folder_trash_request(request)
         drive_request = meeting_prep or (self.is_drive_request(request) and not drive_trash_request)
-        calendar_request = (briefing or meeting_prep or
+        calendar_request = (briefing or meeting_prep or schedule_note_request or
                             bool(re.search(r"캘린더|calendar", request, re.IGNORECASE)) or
                             (not notion_request and bool(re.search(r"일정|스케줄", request))))
         calendar_create_request = (
@@ -1059,7 +1139,7 @@ class DeskBuddy:
                          if self.find_cli(backend)), None)
         executable = selected[1] if selected else None
         if not executable:
-            self.events.put(("error", "선택한 AI CLI를 찾지 못했어. Codex 또는 Claude Code CLI를 설치하고 로그인해줘."))
+            self.post_event(("error", "선택한 AI CLI를 찾지 못했어. Codex 또는 Claude Code CLI를 설치하고 로그인해줘."))
             return
         backend = selected[0]
 
@@ -1069,7 +1149,7 @@ class DeskBuddy:
         try:
             conversation_style = style_context(request, load_examples(CHAT_STYLE))
         except ValueError as exc:
-            self.events.put(("error", str(exc)))
+            self.post_event(("error", str(exc)))
             return
         prompt = (
             "너는 사용자의 데스크톱 개인 비서다. 한국어로 간결하고 정확하게 답한다. "
@@ -1137,7 +1217,21 @@ class DeskBuddy:
             prompt += (
                 "\n회의 준비 요청: 사용자가 지정한 날짜와 시간에 맞는 Google Calendar 회의를 찾아 제목과 시간을 확인한다. "
                 "후보가 여러 개면 임의로 고르지 말고 물어본다. 회의 제목·관련 단어로 Google Drive에서 자료를 검색해 관련성 높은 파일 최대 3개를 이름과 위치로 알려준다. "
+                "Notion에서 정확한 이름이 '📝일정 메모'인 페이지를 찾아 fetch하고, 그 안의 '일정 메모' 데이터베이스 data source를 확인한다. "
+                "해당 data source의 스키마를 fetch한 뒤 이벤트 ID가 있으면 먼저 ID로, 없으면 일정 제목과 시작 일시가 모두 일치하는 행만 조회해 메모를 포함한다. "
+                "여러 행이 일치하면 임의로 선택하지 말고 사용자에게 확인한다. 기존 메모가 없으면 없다고 말하며 브리핑 과정에서 새로 만들지 않는다. "
                 "자료가 없거나 로그인되지 않았으면 그 사실을 밝힌다. 파일·일정을 새로 만들거나 수정하지 않는다."
+            )
+        if schedule_note_request:
+            prompt += (
+                "\n일정 메모 연결 요청: Google Calendar에서 사용자가 가리킨 일정을 제목, 날짜, 시작 시각으로 먼저 확인한다. "
+                "Notion의 '📝일정 메모' 페이지 안에 있는 '일정 메모' 데이터베이스를 사용하고, 다른 페이지나 데이터베이스를 새로 만들지 않는다. "
+                "해당 페이지/데이터베이스가 현재 Notion 연결에서 보이지 않으면 중복 DB를 만들지 말고, 연결된 Notion에 공유가 필요하다고 안내한다. "
+                "데이터베이스를 fetch해 data source URL과 현재 스키마를 확인하고, 같은 Google Calendar 이벤트 ID가 있으면 그 ID를 우선 키로 쓴다. "
+                "ID를 확인할 수 없으면 캘린더 이름·일정 제목·시작 시각(시간대 포함)을 조합한 매핑 키를 사용한다. "
+                "저장할 때 '일정', '시작 시각', '캘린더', '이벤트 ID', '매핑 키', 'Google Calendar URL', '요약 메모', '준비 상태' 속성을 스키마에 맞게 채우고, "
+                "긴 메모와 자료 링크는 해당 행의 페이지 본문에 기록한다. 기존에 정확히 같은 이벤트 키가 있으면 새 행을 만들지 말고 그 행을 수정한다. "
+                "페이지 본문을 쓰기 전 notion://docs/notion-flavored-markdown-spec을 fetch한다. 저장이 실제 성공한 뒤에만 완료했다고 답한다."
             )
         if notion_request:
             prompt += (
@@ -1177,7 +1271,7 @@ class DeskBuddy:
         existing_drive_tab = False
         if model_calendar_request or drive_request:
             if not (shutil.which("npx.cmd") or shutil.which("npx")):
-                self.events.put(("error", "Google Calendar와 Drive 기능에는 Node.js의 npx가 필요해. Node.js를 설치해줘."))
+                self.post_event(("error", "Google Calendar와 Drive 기능에는 Node.js의 npx가 필요해. Node.js를 설치해줘."))
                 return
             try:
                 browser_url = (self.ensure_calendar_browser() if model_calendar_request else
@@ -1185,7 +1279,7 @@ class DeskBuddy:
                 existing_calendar_tab = model_calendar_request and self.has_calendar_tab(browser_url)
                 existing_drive_tab = drive_request and self.has_drive_tab(browser_url)
             except OSError as exc:
-                self.events.put(("error", f"Google용 Chrome을 열지 못했어: {exc}"))
+                self.post_event(("error", f"Google용 Chrome을 열지 못했어: {exc}"))
                 return
         if existing_calendar_tab:
             prompt += ("\n중요: 이 Chrome에는 이미 calendar.google.com/calendar/ 경로의 Calendar 앱 탭이 열려 있다. "
@@ -1205,7 +1299,8 @@ class DeskBuddy:
                        "--skip-git-repo-check", "--sandbox", "workspace-write",
                        "-C", str(workdir)]
         else:
-            command = [executable, "-p", "--output-format", "json", "--json-schema",
+            command = [executable, "-p", "--model", "haiku", "--effort", "low",
+                       "--output-format", "json", "--json-schema",
                        RESPONSE_SCHEMA.read_text(encoding="utf-8"), "--permission-mode", "acceptEdits",
                        "--tools", "Read,Glob,Grep,Edit,Write", "--no-session-persistence", "--strict-mcp-config"]
         claude_servers: dict[str, dict] = {}
@@ -1285,7 +1380,7 @@ class DeskBuddy:
                 if notion_request and any(word in diagnostic.casefold() for word in
                                           ("token expired", "unauthorized", "authentication", "401")):
                     if backend == "codex":
-                        self.events.put(("notion_mcp_login", executable))
+                        self.post_event(("notion_mcp_login", executable))
                         answer = "Notion 연결이 만료됐어. 로그인 브라우저를 열게. 로그인한 뒤 다시 요청해줘."
                     else:
                         answer = "Notion 연결이 만료됐어. Claude Code에서 /mcp를 열고 Notion에 다시 로그인해줘."
@@ -1344,12 +1439,12 @@ class DeskBuddy:
                     if (calendar_request or drive_request or drive_trash_request) and re.search(
                             r"(?:Google|구글|Calendar|캘린더|Drive|드라이브).{0,80}(?:로그인|인증)|(?:로그인|인증).{0,80}(?:Google|구글|Calendar|캘린더|Drive|드라이브)",
                             message, re.IGNORECASE):
-                        self.events.put(("google_login", ""))
+                        self.post_event(("google_login", ""))
                     if notion_request and not notion_trash_request and backend == "codex" and re.search(
                             r"(?:Notion|노션).{0,80}(?:로그인|인증|연결).{0,30}(?:만료|필요|안 됨|안됨)|(?:만료|필요).{0,30}(?:Notion|노션).{0,30}(?:로그인|인증)",
                             message, re.IGNORECASE):
-                        self.events.put(("notion_mcp_login", executable))
-                    self.events.put(("result", json.dumps({"message": message,
+                        self.post_event(("notion_mcp_login", executable))
+                    self.post_event(("result", json.dumps({"message": message,
                                                            "open_file": parsed.get("open_file"),
                                                            "open_url": parsed.get("open_url"),
                                                            "change_directory": parsed.get("change_directory"),
@@ -1357,11 +1452,11 @@ class DeskBuddy:
                                                            "requested_open": bool(re.search(r"열어|띄워|보여줘", request))},
                                                           ensure_ascii=False)))
                 else:
-                    self.events.put(("answer", answer or "응답을 받지 못했어. 다시 시도해줘."))
+                    self.post_event(("answer", answer or "응답을 받지 못했어. 다시 시도해줘."))
             except json.JSONDecodeError:
-                self.events.put(("answer", answer or "응답을 받지 못했어. 다시 시도해줘."))
+                self.post_event(("answer", answer or "응답을 받지 못했어. 다시 시도해줘."))
         except Exception as exc:
-            self.events.put(("error", f"AI를 실행하지 못했어: {exc}"))
+            self.post_event(("error", f"AI를 실행하지 못했어: {exc}"))
         finally:
             self.process = None
 
@@ -1492,7 +1587,14 @@ class DeskBuddy:
                 return True
         return False
 
-    def poll_events(self) -> None:
+    def post_event(self, event: tuple[str, str]) -> None:
+        self.events.put(event)
+        try:
+            self.root.event_generate("<<MomoEvent>>", when="tail")
+        except tk.TclError:
+            pass
+
+    def poll_events(self, _event=None) -> None:
         try:
             while True:
                 kind, value = self.events.get_nowait()
@@ -1519,7 +1621,7 @@ class DeskBuddy:
                             if change["action"] == "add":
                                 saved = self.calendar_alerts.add(change["title"], change["day"], change["start"])
                                 if saved and self.settings["reminder_minutes"] != "0":
-                                    message += f"\n모모가 실행 중이면 {self.settings['reminder_minutes']}분 전에 알려줄게."
+                                    message += "\n모모가 실행 중이면 1시간·30분·5분 전에 알려줄게."
                             elif change["action"] == "remove":
                                 self.calendar_alerts.remove(change["title"], change["day"], change["start"])
                         except (OSError, ValueError) as exc:
@@ -1551,7 +1653,6 @@ class DeskBuddy:
                     self.send_button.configure(state="normal")
         except queue.Empty:
             pass
-        self.root.after(100, self.poll_events)
 
     @staticmethod
     def open_web_url(value: str) -> str:
@@ -1590,6 +1691,9 @@ class DeskBuddy:
             return f"파일 열기에 실패했어: {exc}"
 
     def close(self) -> None:
+        hotkey_thread_id = getattr(self, "_hotkey_thread_id", None)
+        if hotkey_thread_id:
+            ctypes.windll.user32.PostThreadMessageW(hotkey_thread_id, 0x0012, 0, 0)
         if self.process and self.process.poll() is None:
             self.process.terminate()
         if self.chrome_process and self.chrome_process.poll() is None:
@@ -1597,8 +1701,51 @@ class DeskBuddy:
         self.root.destroy()
 
     def run(self) -> None:
+        self.start_global_hotkey()
         self.entry.focus_set()
         self.root.mainloop()
+
+    def start_global_hotkey(self) -> None:
+        """Register Ctrl+Shift+M globally without polling the keyboard."""
+        hotkey_id = 0x4D4F
+
+        def listen() -> None:
+            user32 = ctypes.windll.user32
+            modifiers = 0x0002 | 0x0004 | 0x4000  # CTRL | SHIFT | MOD_NOREPEAT
+            if not user32.RegisterHotKey(None, hotkey_id, modifiers, ord("M")):
+                return
+            self._hotkey_thread_id = threading.get_native_id()
+
+            class POINT(ctypes.Structure):
+                _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+            class MSG(ctypes.Structure):
+                _fields_ = [("hwnd", ctypes.c_void_p), ("message", ctypes.c_uint),
+                            ("wParam", ctypes.c_size_t), ("lParam", ctypes.c_ssize_t),
+                            ("time", ctypes.c_uint), ("pt", POINT), ("lPrivate", ctypes.c_uint)]
+
+            message = MSG()
+            try:
+                while user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:
+                    if message.message == 0x0312 and message.wParam == hotkey_id:
+                        try:
+                            self.root.event_generate("<<MomoHotkey>>", when="tail")
+                        except tk.TclError:
+                            break
+            finally:
+                user32.UnregisterHotKey(None, hotkey_id)
+
+        self._hotkey_thread = threading.Thread(target=listen, name="MomoGlobalHotkey", daemon=True)
+        self._hotkey_thread.start()
+
+    def show_from_hotkey(self, _event: tk.Event | None = None) -> None:
+        if not self.root.winfo_viewable():
+            self.root.deiconify()
+        if self.collapsed:
+            self.toggle()
+        self.root.lift()
+        self.root.focus_force()
+        self.entry.focus_set()
 
 
 if __name__ == "__main__":
