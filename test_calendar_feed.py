@@ -13,6 +13,8 @@ class CalendarFeedTest(unittest.TestCase):
         self.assertEqual(validate_feed_url(url), url)
         with self.assertRaises(ValueError):
             validate_feed_url("https://example.com/steal.ics")
+        with self.assertRaisesRegex(ValueError, "공개 iCal"):
+            validate_feed_url("https://calendar.google.com/calendar/ical/me/public/basic.ics")
 
     def test_recurring_and_all_day_events(self):
         feed = b"""BEGIN:VCALENDAR\r

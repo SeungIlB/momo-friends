@@ -17,6 +17,8 @@ def validate_feed_url(value: str) -> str:
             or not parsed.path.endswith(".ics") or parsed.username or parsed.password
             or parsed.fragment):
         raise ValueError("Google Calendar의 비공개 iCal 주소(https://calendar.google.com/… .ics)를 입력해줘.")
+    if "/public/" in parsed.path.lower():
+        raise ValueError("이건 공개 iCal 주소야. 개인 일정은 Google Calendar의 'iCal 형식의 비공개 주소'를 사용해줘.")
     return url
 
 
