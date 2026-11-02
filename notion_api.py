@@ -25,6 +25,49 @@ def verify_token(token: str) -> None:
         raise ValueError(f"Notion 토큰을 확인하지 못했어 (HTTP {response.status_code}).")
 
 
+def find_page(token: str, title: str) -> tuple[str, str]:
+    """Find one accessible, non-trashed page by its exact title."""
+    title = title.strip()
+    if not title or len(title) > 200:
+        raise ValueError("삭제할 Notion 페이지 제목을 정확히 알려줘.")
+    cursor = None
+    matches: list[tuple[str, str]] = []
+    for _ in range(10):
+        body: dict = {"query": title, "filter": {"property": "object", "value": "page"},
+                      "page_size": 100}
+        if cursor:
+            body["start_cursor"] = cursor
+        response = requests.post(BASE + "/search", headers=_headers(token), json=body, timeout=20)
+        if response.status_code == 401:
+            raise ValueError("Notion API 토큰이 만료됐거나 유효하지 않아. 톱니 → Notion API 연결 설정에서 다시 입력해줘.")
+        if not response.ok:
+            raise ValueError(f"Notion 페이지 검색에 실패했어 (HTTP {response.status_code}).")
+        data = response.json()
+        for page in data.get("results", []):
+            if page.get("object") != "page" or page.get("in_trash"):
+                continue
+            actual = _title(page)
+            if _same_requested_event_title(actual, title):
+                matches.append((page["id"], actual))
+        if not data.get("has_more"):
+            break
+        cursor = data.get("next_cursor")
+        if not cursor:
+            raise ValueError("Notion 검색 결과를 끝까지 확인하지 못했어.")
+    else:
+        raise ValueError("Notion 검색 결과가 너무 많아. 더 구체적인 페이지 제목으로 다시 요청해줘.")
+    if not matches:
+        raise ValueError(f"'{title}' 페이지를 찾지 못했어. Integration에 해당 페이지 접근 권한을 부여했는지 확인해줘.")
+    if len(matches) != 1:
+        raise ValueError(f"'{title}' 페이지가 {len(matches)}개야. 제목을 구분할 수 있게 바꾼 뒤 다시 요청해줘.")
+    return matches[0]
+
+
+def trash_page_by_title(token: str, title: str) -> str:
+    page_id, actual_title = find_page(token, title)
+    return trash_page(token, page_id, actual_title)
+
+
 def _title(page: dict) -> str:
     for prop in page.get("properties", {}).values():
         if prop.get("type") == "title":

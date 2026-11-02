@@ -32,6 +32,19 @@ class FriendEditionTest(unittest.TestCase):
         self.assertTrue(assistant.DeskBuddy.is_notion_request("노션에서 페이지 찾아줘"))
         self.assertTrue(assistant.DeskBuddy.is_today_briefing("오늘 브리핑해줘"))
 
+    def test_notion_delete_uses_saved_token_without_cli(self):
+        buddy = assistant.DeskBuddy.__new__(assistant.DeskBuddy)
+        buddy.workdir = Path.cwd()
+        buddy.events = queue.Queue()
+        with patch("assistant.load_token", return_value="secret"), \
+             patch("assistant.trash_page_by_title", return_value="휴지통으로 이동했어") as trash, \
+             patch("assistant.subprocess.Popen") as launch:
+            buddy.ask_ai("노션에서 test2 페이지 삭제해줘")
+        trash.assert_called_once_with("secret", "test2")
+        launch.assert_not_called()
+        self.assertEqual(buddy.events.get_nowait()[0], "answer")
+        self.assertIsNone(assistant.DeskBuddy.notion_delete_title("노션에서 test2 페이지 삭제하지 마"))
+
     def test_default_voice_can_be_replaced_with_saved_text(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(assistant, "VOICE_STYLE", Path(folder) / "voice-style.txt"):
             self.assertIn("그걸 내가 어캐암~", assistant.DeskBuddy.read_voice_style())

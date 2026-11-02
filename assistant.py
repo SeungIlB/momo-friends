@@ -22,7 +22,7 @@ from tkinter import font as tkfont
 
 from PIL import Image, ImageTk
 from google_browser import create_calendar_event, trash_calendar_event, trash_drive_folder
-from notion_api import trash_page, verify_token
+from notion_api import trash_page_by_title, verify_token
 from token_storage import load_token, save_token
 from chat_style import decode_export, parse_export, save_examples, load_examples, style_context
 from calendar_alerts import CalendarAlerts
@@ -890,6 +890,19 @@ class DeskBuddy:
         return bool(re.search(r"노션|notion", request, re.IGNORECASE))
 
     @staticmethod
+    def notion_delete_title(request: str) -> str | None:
+        if re.search(r"(?:삭제|지우|없애|옮기).{0,6}(?:마|않|안)", request):
+            return None
+        quoted = re.search(r"[‘'\"“]([^’'\"”]+)[’'\"”]", request)
+        if quoted:
+            return quoted.group(1).strip()
+        match = re.search(r"(?:노션|notion)(?:에서|의|에)?\s+(.+?)(?:\s*페이지|\s*이벤트)?\s*(?:를|을)?\s*(?:삭제|지워|지우|없애|휴지통|옮겨|옮기)",
+                          request, re.IGNORECASE)
+        if not match:
+            return None
+        return re.sub(r"\s*(?:페이지|이벤트)\s*$", "", match.group(1)).strip() or None
+
+    @staticmethod
     def is_meeting_prep(request: str) -> bool:
         return bool(re.search(r"(?:회의|미팅).{0,20}(?:준비|자료)", request))
 
@@ -911,7 +924,25 @@ class DeskBuddy:
             and re.search(r"휴지통|삭제", history[-1][1]))
         notion_request = self.is_notion_request(request) or notion_confirmed
         notion_trash_request = (notion_confirmed or
-                                (notion_request and bool(re.search(r"삭제|지워|지우|없애|휴지통", request))))
+                                (notion_request and bool(re.search(r"삭제|지워|지우|없애|휴지통|옮겨|옮기", request))
+                                 and not re.search(r"(?:삭제|지우|없애|옮기).{0,6}(?:마|않|안)", request)))
+        if notion_trash_request:
+            target_request = history[-1][0] if notion_confirmed else request
+            title = self.notion_delete_title(target_request)
+            if not title:
+                self.events.put(("answer", "삭제할 Notion 페이지 제목을 정확히 알려줘."))
+                return
+            try:
+                token = load_token(NOTION_TOKEN, "Notion")
+                if not token:
+                    raise ValueError("톱니 → Notion API 연결 설정에서 Integration 토큰을 저장해줘.")
+                outcome = trash_page_by_title(token, title)
+            except (OSError, ValueError) as exc:
+                outcome = f"Notion 페이지 삭제 실패: {exc}"
+                if "토큰" in str(exc) and ("만료" in str(exc) or "유효하지" in str(exc) or "저장" in str(exc)):
+                    self.events.put(("notion_token_login", ""))
+            self.events.put(("answer", outcome))
+            return
         notion_tools = (NOTION_READ_TOOLS
                         + (("notion-create-pages",) if not notion_trash_request and re.search(r"만들|생성|작성|추가", request) else ())
                         + (("notion-update-page",) if not notion_trash_request and re.search(r"수정|변경|고쳐|업데이트", request) else ()))
@@ -1022,7 +1053,7 @@ class DeskBuddy:
         if notion_request:
             prompt += (
                 "\nNotion 요청: 공식 notion MCP로 실제 페이지를 검색하고 필요하면 fetch로 내용을 확인한다. "
-                "Notion 연결이 없거나 인증이 만료되면 성공한 척하지 말고 'codex mcp login notion' 또는 Claude Code의 /mcp 로그인을 안내한다. "
+                "Notion 연결이 없거나 인증이 만료되면 성공한 척하지 말고 재로그인이 필요하다고 답한다. Codex 연결이면 모모가 로그인 브라우저를 연다. "
                 "페이지 작성·수정은 사용자가 명시적으로 요청했을 때만 한다. 대상 페이지나 위치가 불명확하면 먼저 물어본다. "
                 "페이지를 열어 달라고 하면 확인한 Notion 페이지의 https URL을 open_url에 적고, 그 외에는 null로 둔다. "
                 "Notion URL을 open_file에 넣지 않는다."
@@ -1164,9 +1195,11 @@ class DeskBuddy:
                 diagnostic = "\n".join(diagnostics)[-500:]
                 if notion_request and any(word in diagnostic.casefold() for word in
                                           ("token expired", "unauthorized", "authentication", "401")):
-                    answer = ("Notion 연결이 만료됐어. PowerShell에서 'codex mcp login notion'을 실행해 "
-                              "브라우저 로그인을 다시 해줘." if backend == "codex" else
-                              "Notion 연결이 만료됐어. Claude Code에서 /mcp를 열고 Notion에 다시 로그인해줘.")
+                    if backend == "codex":
+                        self.events.put(("notion_mcp_login", executable))
+                        answer = "Notion 연결이 만료됐어. 로그인 브라우저를 열게. 로그인한 뒤 다시 요청해줘."
+                    else:
+                        answer = "Notion 연결이 만료됐어. Claude Code에서 /mcp를 열고 Notion에 다시 로그인해줘."
                 else:
                     answer = ("Codex" if backend == "codex" else "Claude Code") + " 실행에 실패했어. " + diagnostic
             try:
@@ -1184,20 +1217,6 @@ class DeskBuddy:
                             message = (message + "\n" if message else "") + outcome
                         elif not target:
                             message = message or "삭제할 Drive 폴더 이름을 정확히 알려줘."
-                    if notion_trash_request:
-                        page_id = parsed.get("notion_page_id")
-                        title = parsed.get("notion_title")
-                        if parsed.get("notion_action") == "trash" and isinstance(page_id, str) and isinstance(title, str):
-                            try:
-                                token = load_token(NOTION_TOKEN, "Notion")
-                                if not token:
-                                    raise ValueError("톱니 → Notion API 연결 설정에서 Integration 토큰을 저장해줘.")
-                                outcome = trash_page(token, page_id, title)
-                            except (OSError, ValueError) as exc:
-                                outcome = f"Notion 페이지 삭제 실패: {exc}"
-                            message = (message + "\n" if message else "") + outcome
-                        elif not page_id:
-                            message = message or "삭제할 Notion 페이지를 정확히 알려줘."
                     calendar_change = None
                     if calendar_trash_request:
                         title = parsed.get("calendar_title")
@@ -1233,6 +1252,14 @@ class DeskBuddy:
                             message = (message + "\n" if message else "") + outcome
                         elif not title or not day or not start or not end:
                             message = message or "추가할 일정의 제목, 날짜, 시작·종료 시각을 알려줘."
+                    if (calendar_request or drive_request or drive_trash_request) and re.search(
+                            r"(?:Google|구글|Calendar|캘린더|Drive|드라이브).{0,80}(?:로그인|인증)|(?:로그인|인증).{0,80}(?:Google|구글|Calendar|캘린더|Drive|드라이브)",
+                            message, re.IGNORECASE):
+                        self.events.put(("google_login", ""))
+                    if notion_request and not notion_trash_request and backend == "codex" and re.search(
+                            r"(?:Notion|노션).{0,80}(?:로그인|인증|연결).{0,30}(?:만료|필요|안 됨|안됨)|(?:만료|필요).{0,30}(?:Notion|노션).{0,30}(?:로그인|인증)",
+                            message, re.IGNORECASE):
+                        self.events.put(("notion_mcp_login", executable))
                     self.events.put(("result", json.dumps({"message": message,
                                                            "open_file": parsed.get("open_file"),
                                                            "open_url": parsed.get("open_url"),
@@ -1380,6 +1407,20 @@ class DeskBuddy:
         try:
             while True:
                 kind, value = self.events.get_nowait()
+                if kind == "google_login":
+                    self.open_google_login()
+                    continue
+                if kind == "notion_token_login":
+                    self.configure_notion()
+                    continue
+                if kind == "notion_mcp_login":
+                    try:
+                        subprocess.Popen([value, "mcp", "login", "notion"],
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                    except OSError as exc:
+                        self.add_message(self.settings["name"], f"Notion 로그인 창을 열지 못했어: {exc}")
+                    continue
                 if kind == "result":
                     result = json.loads(value)
                     message = result["message"]

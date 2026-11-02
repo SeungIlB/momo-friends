@@ -4,10 +4,31 @@ import unittest
 from datetime import datetime
 from unittest.mock import Mock, patch
 
-from notion_api import _same_requested_event_title, trash_page
+from notion_api import _same_requested_event_title, find_page, trash_page
 
 
 class NotionTrashTest(unittest.TestCase):
+    def test_search_finds_one_exact_page(self):
+        page = {"object": "page", "id": "40786778-0f42-8159-ab9f-e4d92f545b52",
+                "in_trash": False, "properties": {"title": {"type": "title", "title": [
+                    {"plain_text": "test2"}]}}}
+        response = Mock(ok=True, status_code=200)
+        response.json.return_value = {"results": [page, {**page, "id": "other", "in_trash": True}],
+                                      "has_more": False}
+        with patch("notion_api.requests.post", return_value=response) as search:
+            self.assertEqual(find_page("token", "test2"), (page["id"], "test2"))
+        self.assertEqual(search.call_args.kwargs["json"]["query"], "test2")
+
+    def test_search_rejects_duplicate_exact_pages(self):
+        page = {"object": "page", "id": "40786778-0f42-8159-ab9f-e4d92f545b52",
+                "in_trash": False, "properties": {"title": {"type": "title", "title": [
+                    {"plain_text": "test2"}]}}}
+        response = Mock(ok=True, status_code=200)
+        response.json.return_value = {"results": [page, {**page, "id": "another"}], "has_more": False}
+        with patch("notion_api.requests.post", return_value=response):
+            with self.assertRaisesRegex(ValueError, "2개"):
+                find_page("token", "test2")
+
     def test_notion_event_title_with_timestamp(self):
         actual = "당산 옛날 곱창 회식 " + datetime.now().astimezone().replace(
             hour=17, minute=30, second=0, microsecond=0).isoformat(timespec="milliseconds")
