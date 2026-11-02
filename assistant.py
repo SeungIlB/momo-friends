@@ -757,16 +757,6 @@ class DeskBuddy:
             self.calendar_widget = None
             self.open_calendar_widget_if_enabled()
 
-    def draw_message_avatar(self, avatar: tk.Canvas) -> None:
-        avatar.delete("all")
-        avatar.configure(bg=self.theme["surface"])
-        avatar.create_oval(2, 2, 22, 22, fill=self.theme["panel"],
-                           outline=self.theme["accent"], width=1)
-        avatar.create_oval(7, 9, 9, 11, fill=self.theme["accent"], outline="")
-        avatar.create_oval(15, 9, 17, 11, fill=self.theme["accent"], outline="")
-        avatar.create_arc(8, 10, 16, 18, start=200, extent=140,
-                           style="arc", outline=self.theme["accent"], width=1)
-
     def draw_send_button(self) -> None:
         self.send_button.delete("all")
         self.send_button.create_oval(1, 1, 37, 37, fill=self.theme["accent"], outline="")
@@ -800,11 +790,6 @@ class DeskBuddy:
         previous_is_user = self.message_rows[-1][3] if self.message_rows else None
         row.pack(fill="x", padx=15, pady=(6 if previous_is_user == is_user else 14, 0))
         avatar = None
-        if not is_user:
-            avatar = tk.Canvas(row, width=24, height=24, highlightthickness=0,
-                               bg=self.theme["surface"])
-            avatar.pack(side="left", anchor="n", padx=(0, 7), pady=(3, 0))
-            self.draw_message_avatar(avatar)
         bubble = RoundedMessage(row, who, message, is_user, self.theme,
                                 min(420, int(self.chat_canvas.winfo_width() * 0.78)))
         bubble.pack(side="right" if is_user else "left")
