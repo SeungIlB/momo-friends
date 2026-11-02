@@ -50,7 +50,7 @@ class CalendarWidget:
         panel.pack(fill="both", expand=True, padx=1, pady=1)
         header = Frame(panel, bg=theme["panel"])
         header.pack(fill="x", padx=16, pady=(13, 7))
-        title = Label(header, text="MOMO CALENDAR", bg=theme["panel"], fg=theme["accent"],
+        title = Label(header, text="MY CALENDAR", bg=theme["panel"], fg=theme["accent"],
                       font=("Segoe UI", 9, "bold"))
         title.pack(side="left")
         self._bind_drag(header)
