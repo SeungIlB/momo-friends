@@ -35,6 +35,7 @@ class CalendarWidget:
         self.pending: queue.Queue[tuple[str, object]] = queue.Queue()
         self.loading = False
         self.refresh_requested = False
+        self.request_id = 0
         self.drag_offset: tuple[int, int] | None = None
         self.window = Toplevel(root)
         self.window.title("모모 캘린더")
@@ -69,6 +70,8 @@ class CalendarWidget:
         Button(nav, text="↻", command=self.refresh, relief="flat", bd=0,
                bg=theme["panel"], fg=theme["accent"], font=("Segoe UI", 12)).pack(side="right", padx=5)
         self.grid = Frame(panel, bg=theme["panel"])
+        for column in range(7):
+            self.grid.grid_columnconfigure(column, weight=1, uniform="calendar-day")
         self.grid.pack(fill="x", padx=13)
         self.agenda = Frame(panel, bg=theme["panel"])
         self.agenda.pack(fill="both", expand=True, padx=16, pady=(8, 4))
@@ -135,18 +138,18 @@ class CalendarWidget:
             child.destroy()
         for col, label in enumerate(("월", "화", "수", "목", "금", "토", "일")):
             Label(self.grid, text=label, bg=self.theme["panel"], fg=self.theme["muted"],
-                  font=("Malgun Gothic", 8), width=4).grid(row=0, column=col, pady=(0, 4))
+                  font=("Malgun Gothic", 8)).grid(row=0, column=col, sticky="nsew", pady=(0, 4))
         marked = {row["day"] for row in self.rows}
         for row_index, week in enumerate(calendar.Calendar().monthdatescalendar(self.month.year, self.month.month), 1):
             for col, day in enumerate(week):
                 active = day == self.selected
                 text = str(day.day) + (" •" if day.isoformat() in marked else "")
-                Button(self.grid, text=text, width=4, relief="flat", bd=0,
+                Button(self.grid, text=text, relief="flat", bd=0,
                        bg=self.theme["button"] if active else self.theme["panel"],
                        fg=self.theme["accent"] if active else
                        (self.theme["text"] if day.month == self.month.month else self.theme["muted"]),
                        font=("Malgun Gothic", 8, "bold" if active else "normal"),
-                       command=lambda value=day: self.select_day(value)).grid(row=row_index, column=col, pady=1)
+                       command=lambda value=day: self.select_day(value)).grid(row=row_index, column=col, sticky="nsew", pady=1)
         self._render_agenda()
 
     def select_day(self, day: date) -> None:
@@ -197,6 +200,7 @@ class CalendarWidget:
                   fg=self.theme["muted"], font=("Malgun Gothic", 8), anchor="w").pack(fill="x")
 
     def refresh(self) -> None:
+        self.request_id += 1
         if self.loading:
             self.refresh_requested = True
             return
@@ -215,6 +219,7 @@ class CalendarWidget:
         self.feed_connected = True
         weeks = calendar.Calendar().monthdatescalendar(self.month.year, self.month.month)
         first, last = weeks[0][0], weeks[-1][-1] + timedelta(days=1)
+        request_id = self.request_id
         self.loading = True
         self.status.configure(text="일정 확인 중…")
 
@@ -228,9 +233,9 @@ class CalendarWidget:
                     errors.append(str(exc))
             if rows or len(errors) < len(urls):
                 rows.sort(key=lambda row: (row["day"], row["sort"], row["title"]))
-                self.pending.put(("rows", (rows, len(errors))))
+                self.pending.put(("rows", (rows, len(errors), request_id)))
             else:
-                self.pending.put(("error", errors[0]))
+                self.pending.put(("error", (errors[0], request_id)))
             try:
                 self.window.event_generate("<<CalendarFeedLoaded>>", when="tail")
             except Exception:
@@ -246,7 +251,12 @@ class CalendarWidget:
                 kind, value = self.pending.get_nowait()
                 self.loading = False
                 if kind == "rows":
-                    rows, failed = value
+                    rows, failed, request_id = value
+                    if request_id != self.request_id:
+                        if self.refresh_requested:
+                            self.refresh_requested = False
+                            self.refresh()
+                        continue
                     rows = self._with_local_changes(rows)
                     changed = rows != self.rows
                     self.rows = rows
@@ -256,7 +266,13 @@ class CalendarWidget:
                     else:
                         self._render_agenda()
                 else:
-                    self.status.configure(text=value)
+                    error, request_id = value
+                    if request_id != self.request_id:
+                        if self.refresh_requested:
+                            self.refresh_requested = False
+                            self.refresh()
+                        continue
+                    self.status.configure(text=error)
                 if self.refresh_requested:
                     self.refresh_requested = False
                     self.refresh()
