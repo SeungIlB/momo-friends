@@ -44,6 +44,18 @@ class FriendEditionTest(unittest.TestCase):
         launch.assert_not_called()
         self.assertEqual(buddy.events.get_nowait()[0], "answer")
         self.assertIsNone(assistant.DeskBuddy.notion_delete_title("노션에서 test2 페이지 삭제하지 마"))
+        self.assertEqual(assistant.DeskBuddy.notion_delete_title("ㅇㅎ 페이지 삭제해줘"), "ㅇㅎ")
+
+    def test_notion_page_delete_without_service_name(self):
+        buddy = assistant.DeskBuddy.__new__(assistant.DeskBuddy)
+        buddy.workdir = Path.cwd()
+        buddy.events = queue.Queue()
+        with patch("assistant.load_token", return_value="secret"), \
+             patch("assistant.trash_page_by_title", return_value="휴지통으로 이동했어") as trash, \
+             patch("assistant.subprocess.Popen") as launch:
+            buddy.ask_ai("ㅇㅎ 페이지 삭제해줘")
+        trash.assert_called_once_with("secret", "ㅇㅎ")
+        launch.assert_not_called()
 
     def test_default_voice_can_be_replaced_with_saved_text(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(assistant, "VOICE_STYLE", Path(folder) / "voice-style.txt"):

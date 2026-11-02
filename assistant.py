@@ -899,6 +899,8 @@ class DeskBuddy:
         match = re.search(r"(?:노션|notion)(?:에서|의|에)?\s+(.+?)(?:\s*페이지|\s*이벤트)?\s*(?:를|을)?\s*(?:삭제|지워|지우|없애|휴지통|옮겨|옮기)",
                           request, re.IGNORECASE)
         if not match:
+            match = re.search(r"^\s*(.+?)\s*페이지(?:를|을)?\s*(?:삭제|지워|지우|없애|휴지통|옮겨|옮기)", request)
+        if not match:
             return None
         return re.sub(r"\s*(?:페이지|이벤트)\s*$", "", match.group(1)).strip() or None
 
@@ -922,7 +924,10 @@ class DeskBuddy:
             and re.search(r"노션|Notion", history[-1][0], re.IGNORECASE)
             and re.search(r"삭제|지워|지우|없애|휴지통", history[-1][0])
             and re.search(r"휴지통|삭제", history[-1][1]))
-        notion_request = self.is_notion_request(request) or notion_confirmed
+        notion_page_delete = bool(re.search(r"페이지", request) and
+                                  re.search(r"삭제|지워|지우|없애|휴지통|옮겨|옮기", request) and
+                                  not re.search(r"웹사이트|파일|PDF", request, re.IGNORECASE))
+        notion_request = self.is_notion_request(request) or notion_confirmed or notion_page_delete
         notion_trash_request = (notion_confirmed or
                                 (notion_request and bool(re.search(r"삭제|지워|지우|없애|휴지통|옮겨|옮기", request))
                                  and not re.search(r"(?:삭제|지우|없애|옮기).{0,6}(?:마|않|안)", request)))
