@@ -1280,7 +1280,7 @@ class DeskBuddy:
                              and (not briefing or tool in {"list_pages", "select_page", "take_snapshot",
                                                             "click", "press_key", "wait_for"}))
         if backend == "codex":
-            command = [executable, "--no-daemon", "exec", "-m", CODEX_MODEL,
+            command = [executable, "--no-daemon", "exec", "--ignore-user-config", "-m", CODEX_MODEL,
                        "--skip-git-repo-check", "--sandbox", "workspace-write",
                        "-C", str(workdir)]
         else:
