@@ -1,5 +1,5 @@
-#define MyAppName "모모 비서 (친구용)"
-#define MyAppVersion "1.4.15"
+#define MyAppName "비오 비서 (친구용)"
+#define MyAppVersion "1.4.16"
 #define MyAppExeName "MomoFriends.exe"
 
 [Setup]
@@ -34,8 +34,8 @@ Source: "사용자 가이드.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autoprograms}\모모 사용자 가이드"; Filename: "{app}\사용자 가이드.md"
+Name: "{autoprograms}\비오 사용자 가이드"; Filename: "{app}\사용자 가이드.md"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "모모 실행"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "비오 실행"; Flags: nowait postinstall skipifsilent
