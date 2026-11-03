@@ -1046,9 +1046,18 @@ class DeskBuddy:
         schedule_note_request = self.is_schedule_note_request(request)
         schedule_notes_setup = self.is_schedule_notes_setup_request(request)
         schedule_note_rename = self.parse_schedule_note_rename(request)
+        notion_edit_action = bool(re.search(r"수정|변경|고쳐|업데이트|바꾸|바꿔", request))
+        notion_context = bool(history and any(
+            re.search(r"노션|notion", question + " " + answer, re.IGNORECASE)
+            for question, answer in history[-3:]))
+        notion_detail_edit = bool(
+            re.search(r"상세\s*내용|페이지\s*내용|페이지\s*본문|본문", request)
+            and notion_edit_action)
+        notion_followup_edit = notion_context and notion_edit_action
         notion_request = (self.is_notion_request(request) or notion_confirmed or notion_page_delete
                           or meeting_prep or schedule_note_request or schedule_notes_setup
-                          or schedule_note_rename is not None)
+                          or schedule_note_rename is not None or notion_detail_edit
+                          or notion_followup_edit)
         notion_trash_request = (notion_confirmed or
                                 (notion_request and bool(re.search(r"삭제|지워|지우|없애|휴지통|옮겨|옮기", request))
                                  and not re.search(r"(?:삭제|지우|없애|옮기).{0,6}(?:마|않|안)", request)))
@@ -1100,7 +1109,7 @@ class DeskBuddy:
                         + (("notion-create-pages",) if not notion_trash_request and
                            re.search(r"만들|생성|작성|추가|저장|기록|남겨|메모해|적어|써줘", request) else ())
                         + (("notion-update-page",) if not notion_trash_request and
-                           re.search(r"수정|변경|고쳐|업데이트", request) else ()))
+                           notion_edit_action else ()))
         drive_trash_request = self.is_drive_folder_trash_request(request)
         drive_request = meeting_prep or (self.is_drive_request(request) and not drive_trash_request)
         calendar_request = (briefing or meeting_prep or schedule_note_request or
