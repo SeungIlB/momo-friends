@@ -1363,7 +1363,8 @@ class DeskBuddy:
             if code != 0 and not answer:
                 diagnostic = "\n".join(diagnostics)[-500:]
                 if notion_request and any(word in diagnostic.casefold() for word in
-                                          ("token expired", "unauthorized", "authentication", "401")):
+                                          ("token expired", "unauthorized", "authentication", "auth required",
+                                           "not logged in", "login required", "401")):
                     if backend == "codex":
                         self.post_event(("notion_mcp_login", executable))
                         answer = "Notion 연결이 만료됐어. 로그인 브라우저를 열게. 로그인한 뒤 다시 요청해줘."
