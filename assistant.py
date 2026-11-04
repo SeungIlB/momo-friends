@@ -803,6 +803,22 @@ class DeskBuddy:
             self.root.after_cancel(self.scroll_job)
         self.scroll_job = self.root.after_idle(self.scroll_to_latest)
 
+    def clear_conversation(self) -> None:
+        if self.scroll_job is not None:
+            try:
+                self.root.after_cancel(self.scroll_job)
+            except tk.TclError:
+                pass
+            self.scroll_job = None
+        for row, _bubble, _avatar, _is_user in self.message_rows:
+            row.destroy()
+        self.message_rows.clear()
+        self.history.clear()
+        self.last_request = ""
+        self.chat_canvas.configure(scrollregion=(0, 0, 0, 0))
+        self.chat_canvas.yview_moveto(0)
+        self.status.configure(text="")
+
     def scroll_to_latest(self) -> None:
         self.scroll_job = None
         self.chat_inner.update_idletasks()
@@ -932,6 +948,9 @@ class DeskBuddy:
         if not request or self.busy:
             return
         self.entry.delete(0, "end")
+        if request.casefold() == "/clear":
+            self.clear_conversation()
+            return
         self.add_message("나", request)
         if request.startswith("/remember ") or request.startswith("기억해줘: "):
             rule = request.split(" ", 1)[1].strip() if request.startswith("/remember ") else request.split(":", 1)[1].strip()

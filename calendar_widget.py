@@ -145,12 +145,13 @@ class CalendarWidget:
         for row_index, week in enumerate(calendar.Calendar().monthdatescalendar(self.month.year, self.month.month), 1):
             for col, day in enumerate(week):
                 active = day == self.selected
+                today = day == date.today()
                 text = str(day.day) + (" •" if day.isoformat() in marked else "")
                 button = Button(self.grid, text=text, relief="flat", bd=0,
                        bg=self.theme["button"] if active else self.theme["panel"],
-                       fg=self.theme["accent"] if active else
+                       fg=self.theme["accent"] if active or today else
                        (self.theme["text"] if day.month == self.month.month else self.theme["muted"]),
-                       font=("Malgun Gothic", 8, "bold" if active else "normal"),
+                       font=("Malgun Gothic", 8, "bold" if active or today else "normal"),
                        command=lambda value=day: self.select_day(value))
                 button.grid(row=row_index, column=col, sticky="nsew", pady=1)
                 self.day_buttons[day] = button
@@ -166,11 +167,12 @@ class CalendarWidget:
         if button is None:
             return
         active = day == self.selected
+        today = day == date.today()
         button.configure(
             bg=self.theme["button"] if active else self.theme["panel"],
-            fg=self.theme["accent"] if active else
+            fg=self.theme["accent"] if active or today else
             (self.theme["text"] if day.month == self.month.month else self.theme["muted"]),
-            font=("Malgun Gothic", 8, "bold" if active else "normal"),
+            font=("Malgun Gothic", 8, "bold" if active or today else "normal"),
         )
 
     def select_day(self, day: date) -> None:
